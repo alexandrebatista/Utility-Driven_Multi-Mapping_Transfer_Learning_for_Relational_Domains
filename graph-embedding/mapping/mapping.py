@@ -1,10 +1,7 @@
 import os
 import re
+from operator import itemgetter
 
-
-##############################
-# 1. Funções para parse dos arquivos modes.pl
-##############################
 
 class Mapping:
     def __init__(self, source_modes, target_modes):
@@ -17,17 +14,19 @@ class Mapping:
         self._target_types = self._extract_types(target_modes)
         self._target_types_embeddings = {}
         self._target_predicate_embeddings = {}
+        self._target_target_predicate = None
+        self._target_target_types = None
 
         self._coherent_mappings = {}
         self._useful_mappings = {}
+        self._robust_mappings = {}
 
     def _extract_types(self, modes):
         types = set()
 
         for value in modes.values():
             for item in value:
-                for el in item:
-                    types.add(el)
+                types.add(item)
 
         return types
 
@@ -36,6 +35,9 @@ class Mapping:
 
     def get_target_predicates(self):
         return list(self._target_modes.keys())
+
+    def get_target_modes(self):
+        return self._target_modes
 
     def set_coherent_mappings(self, mappings):
         self._coherent_mappings = mappings
@@ -48,6 +50,16 @@ class Mapping:
 
     def get_useful_mappings(self):
         return self._useful_mappings
+
+    def set_target_target_predicate(self, target_target_predicate):
+        self._target_target_predicate = target_target_predicate
+        self._target_target_types = set(self._target_modes[target_target_predicate])
+
+    def get_target_target_predicate(self):
+        return self._target_target_predicate
+
+    def get_target_target_types(self):
+        return self._target_target_types
 
     def print_coherent_mappings(self):
         print("Total de soluções coerentes encontradas:", len(self._coherent_mappings))
@@ -73,6 +85,15 @@ class Mapping:
                 print("  " + key + " -> " + str(value))
             print("-" * 40)
 
+    def set_robust_mappings(self, robust_mappings):
+        self._robust_mappings = robust_mappings
+
+    def get_robust_mappings(self):
+        return self._robust_mappings
+
+##############################
+# 1. Funções para parse dos arquivos modes.pl
+##############################
 
 def _parse_mode_line(line):
     """
@@ -104,7 +125,8 @@ def _parse_modes_file(filepath):
             parsed = _parse_mode_line(line)
             if parsed is not None:
                 pred, args = parsed
-                modes.setdefault(pred, []).append(args)
+                if pred not in modes:
+                    modes[pred] = args
     return modes
 
 def _extract_types(signature):
@@ -142,48 +164,47 @@ def _is_candidate_mapping_valid(src_signature, tgt_signature):
 
 def generate_tasks(source_modes, target_modes):
     """
-    Para cada predicado da origem, gera tarefas agrupando assinaturas iguais
-    (normalizadas, isto é, ignorando os sinais). Para cada tarefa, gera candidatos
-    de mapeamento para os predicados do destino (também agrupando assinaturas iguais)
-    e inclui a opção de mapeamento para nulo (remoção).
+    Para cada predicado da origem, gera tarefas agrupando assinaturas únicas.
     """
     tasks = []
-    # Para cada predicado da origem
-    for src_pred, src_signatures in source_modes.items():
-        seen_src = {}  # chave: tuple(normalized signature) -> assinatura original (a primeira ocorrida)
-        for src_sig in src_signatures:
-            norm = tuple(_extract_types(src_sig))
-            if norm in seen_src:
-                continue  # Já processamos essa assinatura (ignorando sinais)
-            seen_src[norm] = src_sig  # guarda a primeira ocorrência
-            task = {
-                'source_predicate': src_pred,
-                'source_signature': src_sig,
-                'candidates': []
-            }
-            # Para cada predicado do destino, considere apenas assinaturas únicas
-            for tgt_pred, tgt_signatures in target_modes.items():
-                seen_tgt = {}
-                for tgt_sig in tgt_signatures:
-                    norm_tgt = tuple(_extract_types(tgt_sig))
-                    if norm_tgt in seen_tgt:
-                        continue
-                    seen_tgt[norm_tgt] = tgt_sig
-                    local_map = _is_candidate_mapping_valid(src_sig, tgt_sig)
-                    if local_map is not None:
-                        candidate = {
-                            'target_predicate': tgt_pred,
-                            'target_signature': tgt_sig,
-                            'local_map': local_map
-                        }
-                        task['candidates'].append(candidate)
-            # Adiciona a opção de mapeamento para nulo (remoção)
-            task['candidates'].append({
-                'target_predicate': None,
-                'target_signature': None,
-                'local_map': {}
-            })
-            tasks.append(task)
+    seen_src = {}  # Para evitar duplicatas de assinaturas na origem
+
+    for src_pred, src_signature in source_modes.items():
+        norm_src = tuple(src_signature)
+        if norm_src in seen_src:
+            continue  # Ignora assinaturas repetidas
+        seen_src[norm_src] = src_signature
+
+        task = {
+            'source_predicate': src_pred,
+            'source_signature': src_signature,
+            'candidates': []
+        }
+
+        seen_tgt = {}  # Para evitar duplicatas de assinaturas no destino
+        for tgt_pred, tgt_signature in target_modes.items():
+            norm_tgt = tuple(tgt_signature)
+            if norm_tgt in seen_tgt:
+                continue
+            seen_tgt[norm_tgt] = tgt_signature
+
+            local_map = _is_candidate_mapping_valid(src_signature, tgt_signature)
+            if local_map is not None:
+                candidate = {
+                    'target_predicate': tgt_pred,
+                    'target_signature': tgt_signature,
+                    'local_map': local_map
+                }
+                task['candidates'].append(candidate)
+
+        # Adiciona a opção de mapeamento para nulo (remoção)
+        task['candidates'].append({
+            'target_predicate': None,
+            'target_signature': None,
+            'local_map': {}
+        })
+        tasks.append(task)
+
     return tasks
 
 
@@ -258,7 +279,30 @@ def generate_all_coherent_mappings(source_modes, target_modes):
 # 5. Filtra os mapeamentos que contém o predicado alvo e seus tipos
 ##############################
 
-def filter_solutions(solutions, required_predicates):
+def filter_solutions(solutions, required_predicate):
+    """
+    Filtra as soluções de mapeamento, mantendo apenas aquelas que possuem
+    mapeamento para todos os tipos obrigatórios e que utilizam todos os
+    predicados obrigatórios.
+
+    Cada solução é uma tupla (assignment, global_mapping), onde:
+      - global_mapping: dicionário que mapeia os tipos da origem para os tipos do destino.
+      - assignment: lista de dicionários, cada um com as chaves:
+          'source_predicate', 'source_signature', 'target_predicate', 'target_signature', 'local_map'
+
+    :param solutions: Lista de soluções geradas pelo código anterior.
+    :param required_types: Lista de tipos obrigatórios (por exemplo, ['person', 'movie']).
+    :param required_predicate: Predicado obrigatório (por exemplo, 'actor'.
+    :return: Lista de soluções que atendem aos critérios.
+    """
+
+    return [mapping for mapping in solutions if required_predicate in mapping["predicate_mappings"].values()]
+
+##############################
+# 5. Filtra os mapeamentos que populam o arquivo facts.pl
+##############################
+
+def filter_robust_solutions(mappings):
     """
     Filtra as soluções de mapeamento, mantendo apenas aquelas que possuem
     mapeamento para todos os tipos obrigatórios e que utilizam todos os
@@ -276,15 +320,26 @@ def filter_solutions(solutions, required_predicates):
     """
     filtered = []
 
-    for mapping in solutions:
-        # Verifica se todos os predicados obrigatórios estão presentes
-        if not all(req_pred in mapping["predicate_mappings"].values() for req_pred in required_predicates):
-            continue
+    for mapping in mappings.get_useful_mappings():
 
-        filtered.append(mapping)
+        mapped_predicates = set(mapping["predicate_mappings"].values())
+        if None in mapped_predicates:
+            mapped_predicates.remove(None)
 
-    return filtered
+        # Considera apenas os mapeamentos que mapeiam predicados além do predicado target e que mapeiam predicados que utilizam os tipos dos argumentos do target
+        if len(mapped_predicates) > 1:
+            mapped_predicates.remove(mappings.get_target_target_predicate())
 
+            types_used = []
+            for key in mappings.get_target_modes():
+                if key in mapped_predicates:
+                    types_used += mappings.get_target_modes()[key]
+            types_used = set(types_used)
+
+            if all(target_type in types_used for target_type in mappings.get_target_target_types()):
+                filtered.append(mapping)
+
+    mappings.set_robust_mappings(filtered)
 
 def get_required_predicate(filepath):
     predicate = ""
@@ -293,7 +348,7 @@ def get_required_predicate(filepath):
             predicate = line.split("(")[0]
             break
     f.close()
-    return [predicate]
+    return predicate
 
 
 def generate_mappings(source_dir, target_dir):
@@ -316,9 +371,12 @@ def generate_mappings(source_dir, target_dir):
     target_pos_filepath = os.path.join(target_dir, 'pos.pl')
     required_predicate = get_required_predicate(target_pos_filepath)
 
-    useful_mappings = filter_solutions(coherent_mappings, required_predicate)
+    mappings.set_target_target_predicate(required_predicate)
 
+    useful_mappings = filter_solutions(coherent_mappings, required_predicate)
     mappings.set_useful_mappings(useful_mappings)
+
+    filter_robust_solutions(mappings)
 
     return mappings
 
