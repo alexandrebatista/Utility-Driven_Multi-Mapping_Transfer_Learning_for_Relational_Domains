@@ -43,6 +43,10 @@ def generating_mappings_for(target_domain_name):
                 apply_mappings(source_path, os.path.join(output_path, item.name), solutions.get_robust_mappings(), solutions.get_target_target_predicate())
 
 if __name__ == '__main__':
+    import os
+
+    os.nice(10)
+
     path = Path("./preprocessed")
     generating_mappings_for("cora")
     generating_mappings_for("imdb")

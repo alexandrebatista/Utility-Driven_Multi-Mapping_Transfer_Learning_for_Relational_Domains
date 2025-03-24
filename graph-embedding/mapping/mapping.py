@@ -1,6 +1,5 @@
 import os
 import re
-from operator import itemgetter
 
 
 class Mapping:
@@ -164,30 +163,19 @@ def _is_candidate_mapping_valid(src_signature, tgt_signature):
 
 def generate_tasks(source_modes, target_modes):
     """
-    Para cada predicado da origem, gera tarefas agrupando assinaturas únicas.
+    Para cada predicado da origem, gera tarefas com possíveis mapeamentos.
+    O número de tarefas será igual ao número de predicados do domínio de origem.
     """
     tasks = []
-    seen_src = {}  # Para evitar duplicatas de assinaturas na origem
 
     for src_pred, src_signature in source_modes.items():
-        norm_src = tuple(src_signature)
-        if norm_src in seen_src:
-            continue  # Ignora assinaturas repetidas
-        seen_src[norm_src] = src_signature
-
         task = {
             'source_predicate': src_pred,
             'source_signature': src_signature,
             'candidates': []
         }
 
-        seen_tgt = {}  # Para evitar duplicatas de assinaturas no destino
         for tgt_pred, tgt_signature in target_modes.items():
-            norm_tgt = tuple(tgt_signature)
-            if norm_tgt in seen_tgt:
-                continue
-            seen_tgt[norm_tgt] = tgt_signature
-
             local_map = _is_candidate_mapping_valid(src_signature, tgt_signature)
             if local_map is not None:
                 candidate = {
@@ -252,6 +240,36 @@ def search_tasks(tasks, global_map, current_assignment, solutions, index=0):
             search_tasks(tasks, new_global, current_assignment, solutions, index + 1)
             current_assignment.pop()
 
+def search_tasks_iterative(tasks):
+    solutions = []
+    stack = [(0, [], {})]  # Pilha que armazena o estado: (índice da tarefa, atribuição atual, mapeamento global)
+
+    while stack:
+        index, current_assignment, global_map = stack.pop()
+
+        if index == len(tasks):
+            # Caso base: todas as tarefas foram atribuídas
+            solutions.append((current_assignment.copy(), global_map.copy()))
+            continue
+
+        task = tasks[index]
+        for candidate in task['candidates']:
+            # Tenta combinar o mapeamento global com o mapeamento local do candidato
+            new_global = combine_mapping(global_map, candidate['local_map'])
+            if new_global is not None:
+                # Adiciona a atribuição atualizada e avança para a próxima tarefa
+                new_assignment = current_assignment + [{
+                    'source_predicate': task['source_predicate'],
+                    'source_signature': task['source_signature'],
+                    'target_predicate': candidate['target_predicate'],
+                    'target_signature': candidate['target_signature'],
+                    'local_map': candidate['local_map']
+                }]
+                stack.append((index + 1, new_assignment, new_global))
+
+    return solutions
+
+
 ##############################
 # 4. Função principal
 ##############################
@@ -262,7 +280,8 @@ def generate_all_coherent_mappings(source_modes, target_modes):
 
     # Executa a busca global (backtracking)
     solutions = []
-    search_tasks(tasks, {}, [], solutions)
+    #search_tasks(tasks, {}, [], solutions)
+    solutions = search_tasks_iterative(tasks)
 
     out = []
     for solution in solutions:
@@ -336,7 +355,7 @@ def filter_robust_solutions(mappings):
                     types_used += mappings.get_target_modes()[key]
             types_used = set(types_used)
 
-            if all(target_type in types_used for target_type in mappings.get_target_target_types()):
+            if any(target_type in types_used for target_type in mappings.get_target_target_types()):
                 filtered.append(mapping)
 
     mappings.set_robust_mappings(filtered)
