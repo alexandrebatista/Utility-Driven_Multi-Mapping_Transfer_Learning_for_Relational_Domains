@@ -257,15 +257,18 @@ def search_tasks_iterative(tasks):
             # Tenta combinar o mapeamento global com o mapeamento local do candidato
             new_global = combine_mapping(global_map, candidate['local_map'])
             if new_global is not None:
-                # Adiciona a atribuição atualizada e avança para a próxima tarefa
-                new_assignment = current_assignment + [{
-                    'source_predicate': task['source_predicate'],
-                    'source_signature': task['source_signature'],
-                    'target_predicate': candidate['target_predicate'],
-                    'target_signature': candidate['target_signature'],
-                    'local_map': candidate['local_map']
-                }]
-                stack.append((index + 1, new_assignment, new_global))
+                # Só adiciona a tarefa se a atribuição está sendo feita para um predicado de destino ainda não mapeado
+                if not (candidate["target_predicate"] is not None and
+                        candidate["target_predicate"] in[item["target_predicate"] for item in current_assignment]):
+                    # Adiciona a atribuição atualizada e avança para a próxima tarefa
+                    new_assignment = current_assignment + [{
+                        'source_predicate': task['source_predicate'],
+                        'source_signature': task['source_signature'],
+                        'target_predicate': candidate['target_predicate'],
+                        'target_signature': candidate['target_signature'],
+                        'local_map': candidate['local_map']
+                    }]
+                    stack.append((index + 1, new_assignment, new_global))
 
     return solutions
 
