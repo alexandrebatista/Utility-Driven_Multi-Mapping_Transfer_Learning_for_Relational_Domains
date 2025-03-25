@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from random import sample
 
 from mapping.mapping import generate_mappings
 from mapping.apply_mappings import apply_mappings
@@ -37,10 +38,13 @@ def generating_mappings_for(target_domain_name):
 
             print(f"\t {item.name} : {len(solutions.get_robust_mappings())}")
 
-            if len(solutions.get_robust_mappings()) < 10:
-                create_folder(os.path.join(output_path, item.name))
+            create_folder(os.path.join(output_path, item.name))
 
+            if len(solutions.get_robust_mappings()) <= 10:
                 apply_mappings(source_path, os.path.join(output_path, item.name), solutions.get_robust_mappings(), solutions.get_target_target_predicate())
+            else:
+                apply_mappings(source_path, os.path.join(output_path, item.name), sample(solutions.get_robust_mappings(),10), solutions.get_target_target_predicate())
+
 
 if __name__ == '__main__':
     import os
