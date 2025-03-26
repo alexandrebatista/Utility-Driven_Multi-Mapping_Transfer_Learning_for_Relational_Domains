@@ -28,7 +28,7 @@ def apply_mapping_to_predicate(line, predicate_mapping):
 def generate_neg():
     pass
 
-def apply_mapping(source_path, output_path, predicate_mapping, type_mapping, target_predicate):
+def apply_mapping(source_path, output_path, predicate_mapping, target_predicate):
     """
     Processa o dataset aplicando os mapeamentos nos arquivos.
 
@@ -56,7 +56,7 @@ def apply_mapping(source_path, output_path, predicate_mapping, type_mapping, tar
 
             with open(file_path, "r") as infile:
                 for line in infile:
-                    mapped_line, mapped_predicate = apply_mapping_to_predicate(line, predicate_mapping, type_mapping)
+                    mapped_line, mapped_predicate = apply_mapping_to_predicate(line, predicate_mapping)
 
                     if mapped_line:
                         if filename == "facts.pl":
@@ -80,6 +80,8 @@ def apply_mapping(source_path, output_path, predicate_mapping, type_mapping, tar
         f.write("\n".join(facts_content) + "\n")
     with open(os.path.join(output_path, "pos.pl"), "w") as f:
         f.write("\n".join(pos_content) + "\n")
+    # with open(os.path.join(output_path, "neg.pl"), "w") as f:
+    #     f.write("\n".join(pos_content) + "\n")
 
 
 def apply_mappings(source_path, output_path, mappings, target_predicate):
@@ -89,4 +91,4 @@ def apply_mappings(source_path, output_path, mappings, target_predicate):
     for index, mapping in enumerate(mappings):
         index_path = os.path.join(output_path, str(index))
         os.makedirs(index_path, exist_ok=True)
-        apply_mapping(source_path, index_path, mapping["predicate_mappings"], mapping["type_mappings"], target_predicate)
+        apply_mapping(source_path, index_path, mapping["predicate_mappings"], target_predicate)
