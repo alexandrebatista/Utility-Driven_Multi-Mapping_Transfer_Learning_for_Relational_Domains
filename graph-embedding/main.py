@@ -1,22 +1,18 @@
-import os
 from pathlib import Path
-from random import sample
 
+from database.database import DatabaseWrapper
 from mapping.mapping import generate_mappings
 from mapping.apply_mappings import apply_mappings
+from mapping.select_mappings import select_mappings
+#from train.train_model import train
+
 
 def create_folder(path):
     path = Path(path)
     if not path.exists():
         path.mkdir(parents=True, exist_ok=True)
 
-
-# Se um predicado pred(A,B) é mapeado para o predicado alvo de destino, então eu preciso que existam predicados em facts.pl que utilizem os tipos A e B
-# Juntar todos os folds
 # Aplicar a metodologia da Thaís se o número de mapeamentos for maior que 10 (?)
-# Gerar o neg.pl baseado nos objetos do tipo A e B que aparecem no facts.pl e/ou no pos.pl
-
-# Talvez atualizar o mode.pl de destino para permitir recursividade
 
 def generating_mappings_for(target_domain_name):
     base_dir = "./preprocessed"
@@ -40,10 +36,44 @@ def generating_mappings_for(target_domain_name):
 
             create_folder(os.path.join(output_path, item.name))
 
-            if len(solutions.get_robust_mappings()) <= 10:
-                apply_mappings(source_path, os.path.join(output_path, item.name), solutions.get_robust_mappings(), solutions.get_target_target_predicate())
-            else:
-                apply_mappings(source_path, os.path.join(output_path, item.name), sample(solutions.get_robust_mappings(),10), solutions.get_target_target_predicate())
+            mappings_subset = select_mappings(solutions)
+
+            apply_mappings(source_path,
+                           os.path.join(output_path, item.name),
+                           mappings_subset,
+                           solutions.get_target_target_predicate(),
+                           solutions.get_target_modes())
+
+
+# def train_for(target_domain_name):
+#     settings = {
+#         "randomSeed": 11,
+#         "numberOfClauses": 8,
+#         "numberOfCycles": 100,
+#         "maxTreeDepth": 3,
+#         "nEstimators": 10,
+#         "nodeSize": 2,
+#         "neg_pos_ratio": 2,
+#         "max_failed_neg_sampling_retries": 50,
+#         "ignoreSTDOUT": True,
+#         "useRecursion": False,
+#         "runOriginalRDNBoost": True
+#     }
+#
+#     base_dir = "./preprocessed"
+#     target_directory = f"{base_dir}/{target_domain_name}/fold00"
+#
+#     database_train = None
+#     database_test = None
+#
+#     target_database_train = load_database(
+#         use_recursion=settings["useRecursion"],
+#         logger=logger,
+#         neg_pos_ratio=settings["neg_pos_ratio"],
+#         max_failed_neg_sampling_retries=settings["max_failed_neg_sampling_retries"],
+#     )
+#
+#     train(database_train, database_test, settings)
 
 
 if __name__ == '__main__':
@@ -51,12 +81,20 @@ if __name__ == '__main__':
 
     os.nice(10)
 
-    path = Path("./preprocessed")
-    generating_mappings_for("cora")
-    generating_mappings_for("imdb")
-    generating_mappings_for("nell_finances")
-    generating_mappings_for("nell_sports")
-    generating_mappings_for("twitter")
-    generating_mappings_for("uwcse")
-    generating_mappings_for("yeast")
+    # path = Path("./preprocessed")
+    # generating_mappings_for("cora")
+    # generating_mappings_for("imdb")
+    # generating_mappings_for("nell_finances")
+    # generating_mappings_for("nell_sports")
+    # generating_mappings_for("twitter")
+    # generating_mappings_for("uwcse")
+    # generating_mappings_for("yeast")
+
+    database = DatabaseWrapper()
+    database.process_source("./mapped_datasets/to_cora")
+    database.process_target("./preprocessed/cora")
+
+    train_database = database.generate_train_srldatabase(["fold00", "fold01", "fold02", "fold03"], use_recursion=True)
+    test_database = database.generate_test_srldatabase(["fold04"], use_recursion=False)
+    pass
 
