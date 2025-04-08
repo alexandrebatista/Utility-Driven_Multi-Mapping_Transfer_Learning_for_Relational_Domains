@@ -4,17 +4,11 @@ from srlearn.weight import WeightFactory
 
 
 def train(database_train, database_test, settings):
-    target_domain_target_relation = database_train.getTargetRelation()
-
-    empty_source_database = Database()
-    empty_source_database.getTargetRelation = lambda: target_domain_target_relation
-    empty_source_database.modes = database_train.modes
-
     weight_factory = WeightFactory()
     weight_strategy = weight_factory.getWeightStrategy("scalar", weight=1)
 
     database = Database.prepareTransferLearningDatabase(
-        empty_source_database,
+        sourceDatabase=
         database_train,
         weightStrategy=weight_strategy
     )
