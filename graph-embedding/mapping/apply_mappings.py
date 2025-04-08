@@ -1,45 +1,81 @@
 import os
+import json
+import itertools
+import random
 
 
-def apply_mapping_to_predicate(line, predicate_mapping, type_mapping, is_modes_file=False):
+def apply_mapping_to_predicate(line, predicate_mapping):
     """
     Aplica o mapeamento a uma linha contendo um predicate. Se o predicate não tiver um mapeamento, retorna None.
     Se a linha não for um predicate válido, mantém a linha original.
     """
-
     line = line.strip()
 
     # Se for uma linha vazia ou um comentário, mantém a linha
     if not line or line.startswith("%"):
-        return line
+        return line, None
 
-    # Verificar se a linha corresponde a um predicate na forma predicate(arg1, arg2).
+    # Extrair o predicado e os argumentos
     predicate = line.split("(")[0]
     args = line.split("(")[1][:-2].split(",")
 
     # Se o predicate não tiver um mapeamento, remover a linha
     if predicate not in predicate_mapping or predicate_mapping[predicate] is None:
-        return None
-
-    if is_modes_file:
-        args = [arg[0] + type_mapping[arg[1:]] for arg in args]
+        return None, None
 
     new_predicate = predicate_mapping[predicate]
     mapped_line = f"{new_predicate}({','.join(args)})."
-    return mapped_line
+    return mapped_line, new_predicate
 
+def generate_neg(facts, pos, target_modes):
+    target_predicate = pos[0].split("(")[0]
 
-def apply_mapping(source_path, output_path, predicate_mapping, type_mapping):
+    type1 = target_modes[target_predicate][0]
+    type2 = target_modes[target_predicate][1]
+
+    type1_instances_set = set()
+    type1_instances_list = []
+    type2_instances_set = set()
+    type2_instances_list = []
+
+    for item in facts + pos:
+        predicate = item.split("(")[0]
+        args_types = target_modes[predicate]
+        args = item.split("(")[1][:-2].split(",")
+
+        for index, arg_type in enumerate(args_types):
+            if arg_type == type1:
+                type1_instances_set.add(args[index])
+                type1_instances_list.append(args[index])
+            if arg_type == type2:
+                type2_instances_set.add(args[index])
+                type2_instances_list.append(args[index])
+
+    neg = []
+
+    while len(neg) < len(pos) * 2:
+        sample_index1 = random.randrange(len(type1_instances_list))
+        sample_index2 = random.randrange(len(type2_instances_list))
+        sample = f"{target_predicate}({type1_instances_list[sample_index1]},{type2_instances_list[sample_index2]})."
+        if sample not in pos and sample not in neg:
+            neg.append(sample)
+
+    return neg
+
+def apply_mapping(source_path, output_path, predicate_mapping, target_predicate, target_modes):
     """
     Processa o dataset aplicando os mapeamentos nos arquivos.
 
-    :param source_path: Caminho do dataset original.
-    :param output_path: Caminho onde o dataset transformado será salvo.
-    :param predicate_mapping: Dicionário de mapeamento de predicates.
-    :param type_mapping: Dicionário de mapeamento de tipos.
+    - Se um predicado de facts.pl for mapeado para um predicado-alvo, ele vai para pos.pl
+    - Se um predicado de pos.pl do domínio de origem **não for mapeado para um predicado-alvo**, ele vai para facts.pl
     """
     if not os.path.exists(output_path):
         os.makedirs(output_path)
+
+    # Criar buffers para armazenar os conteúdos
+    facts_content = []
+    pos_content = []
+    neg_content = []
 
     # Percorrer os folds
     for fold in sorted(os.listdir(source_path)):
@@ -47,34 +83,55 @@ def apply_mapping(source_path, output_path, predicate_mapping, type_mapping):
         if not os.path.isdir(fold_path) or not fold.startswith("fold"):
             continue  # Ignorar arquivos que não sejam pastas "foldXX"
 
-        # Criar diretório correspondente no output
-        output_fold_path = os.path.join(output_path, fold)
-        os.makedirs(output_fold_path, exist_ok=True)
+        facts = []
+        pos = []
 
         # Processar cada arquivo dentro do fold
-        for filename in ["facts.pl", "modes.pl", "neg.pl", "pos.pl"]:
+        for filename in ["facts.pl", "pos.pl"]:
             file_path = os.path.join(fold_path, filename)
             if not os.path.exists(file_path):
                 continue
 
-            output_file_path = os.path.join(output_fold_path, filename)
-            is_modes_file = filename == "modes.pl"  # Verifica se é o modes.pl
-
-            with open(file_path, "r") as infile, open(output_file_path, "w") as outfile:
-
+            with open(file_path, "r") as infile:
                 for line in infile:
-                    mapped_line = apply_mapping_to_predicate(line, predicate_mapping, type_mapping, is_modes_file)
+                    mapped_line, mapped_predicate = apply_mapping_to_predicate(line, predicate_mapping)
+
                     if mapped_line:
-                        outfile.write(mapped_line + "\n")
+                        if filename == "facts.pl":
+                            # Se um fato foi mapeado para um predicado-alvo, mover para pos.pl
+                            if mapped_predicate == target_predicate:
+                                pos.append(mapped_line)
+                            else:
+                                facts.append(mapped_line)
+                        elif filename == "pos.pl":
+                            # Se um exemplo positivo não for mapeado para um predicado-alvo, mover para facts.pl
+                            if mapped_predicate == target_predicate:
+                                pos.append(mapped_line)
+                            else:
+                                facts.append(mapped_line)
 
-def apply_mappings(source_path, output_path, mappings):
-    import json
+        # Gerar neg.pl aqui
+        if facts and pos:
+            neg = generate_neg(facts, pos, target_modes)
 
-    with open(output_path + "/mappings.json", 'w') as f:
+            facts_content += facts
+            pos_content += pos
+            neg_content += neg
+
+    # Salvar arquivos
+    with open(os.path.join(output_path, "facts.pl"), "w") as f:
+        f.write("\n".join(facts_content) + "\n")
+    with open(os.path.join(output_path, "pos.pl"), "w") as f:
+        f.write("\n".join(pos_content) + "\n")
+    with open(os.path.join(output_path, "neg.pl"), "w") as f:
+        f.write("\n".join(neg_content) + "\n")
+
+
+def apply_mappings(source_path, output_path, mappings, target_predicate, target_modes):
+    with open(os.path.join(output_path, "mappings.json"), 'w') as f:
         json.dump(mappings, f)
 
     for index, mapping in enumerate(mappings):
-        if not os.path.exists(output_path + "/" + str(index)):
-            os.makedirs(output_path + "/" + str(index))
-        apply_mapping(source_path, output_path + "/" + str(index), mapping["predicate_mappings"], mapping["type_mappings"])
-
+        index_path = os.path.join(output_path, str(index))
+        os.makedirs(index_path, exist_ok=True)
+        apply_mapping(source_path, index_path, mapping["predicate_mappings"], target_predicate, target_modes)
