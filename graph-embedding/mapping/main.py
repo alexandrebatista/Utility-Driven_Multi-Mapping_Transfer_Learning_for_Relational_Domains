@@ -47,18 +47,25 @@ def generate_source_domain_mapped_data(
                 source_domain_mapped_data["nodes"][target_type].update(
                     source_domain_mapped_data["nodes"].pop(source_type))
 
+    # Set to empty target predicates without a source
     for predicate in target_predicates:
         if predicate not in source_domain_mapped_data["edges"]:
             source_domain_mapped_data["edges"][predicate] = set()
 
+    # Set to empty target nodes without a source
     for node in target_nodes:
         if node not in source_domain_mapped_data["nodes"]:
             source_domain_mapped_data["nodes"][node] = set()
 
+    # Remove unmapped nodes
     keys = list(source_domain_mapped_data["nodes"])
     for node in keys:
         if node not in target_nodes:
             source_domain_mapped_data["nodes"].pop(node)
+
+    # Reorder edges and nodes to follow the same definition
+    source_domain_mapped_data["edges"] = {k: source_domain_mapped_data["edges"][k] for k in target_predicates if k in source_domain_mapped_data["edges"]}
+    source_domain_mapped_data["nodes"] = {k: source_domain_mapped_data["nodes"][k] for k in target_nodes if k in source_domain_mapped_data["nodes"]}
 
     return source_domain_mapped_data
 
@@ -72,7 +79,6 @@ def mappings_workflow(train_folds="fold00"):
         output_path = f"/home/alexandre/mestrado/graph-embedding/mapped_datasets/to_{target_domain_path.name}"
         create_folder(output_path)
 
-        target_modes = parse_modes_file(os.path.join(target_directory, "modes.pl"))
         target_domain_vec = extract_vector_metrics_from_domain_file(target_domain_path)
 
         for source_domain_path in path.iterdir():
@@ -85,7 +91,6 @@ def mappings_workflow(train_folds="fold00"):
             solutions = generate_mappings(source_directory, target_directory)
 
             print(f"\t {source_domain_path.name} : {len(solutions.get_robust_mappings())}")
-
 
             target_predicates = solutions.get_target_predicates()
             target_nodes = solutions.get_target_types()
