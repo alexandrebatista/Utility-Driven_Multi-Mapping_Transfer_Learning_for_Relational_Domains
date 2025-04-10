@@ -35,6 +35,9 @@ class Mapping:
     def get_target_predicates(self):
         return list(self._target_modes.keys())
 
+    def get_target_types(self):
+        return list(self._target_types)
+
     def get_target_modes(self):
         return self._target_modes
 
@@ -112,7 +115,7 @@ def _parse_mode_line(line):
     args = [arg.strip() for arg in args_str.split(',')]
     return predicate, args
 
-def _parse_modes_file(filepath):
+def parse_modes_file(filepath):
     """
     Lê o arquivo modes.pl e retorna um dicionário.
     Cada chave é o nome de um predicado e o valor é uma lista de assinaturas
@@ -379,10 +382,10 @@ def generate_mappings(source_dir, target_dir):
     target_modes_filepath = os.path.join(target_dir, 'modes.pl')
 
     #print("Lendo vocabulário de origem:", source_modes_filepath)
-    source_modes = _parse_modes_file(source_modes_filepath)
+    source_modes = parse_modes_file(source_modes_filepath)
 
     #print("Lendo vocabulário de destino:", target_modes_filepath)
-    target_modes = _parse_modes_file(target_modes_filepath)
+    target_modes = parse_modes_file(target_modes_filepath)
 
     mappings = Mapping(source_modes, target_modes)
 

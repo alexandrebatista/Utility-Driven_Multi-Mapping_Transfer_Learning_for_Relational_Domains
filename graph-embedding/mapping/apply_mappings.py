@@ -3,6 +3,10 @@ import json
 import itertools
 import random
 
+from torch.cuda import graph
+
+from mapping.mapping import parse_modes_file
+
 
 def apply_mapping_to_predicate(line, predicate_mapping):
     """
@@ -75,7 +79,6 @@ def apply_mapping(source_path, output_path, predicate_mapping, target_predicate,
     # Criar buffers para armazenar os conteúdos
     facts_content = []
     pos_content = []
-    neg_content = []
 
     # Percorrer os folds
     for fold in sorted(os.listdir(source_path)):
@@ -112,19 +115,18 @@ def apply_mapping(source_path, output_path, predicate_mapping, target_predicate,
 
         # Gerar neg.pl aqui
         if facts and pos:
-            neg = generate_neg(facts, pos, target_modes)
+            facts_content.append(facts)
+            pos_content.append(pos)
 
-            facts_content += facts
-            pos_content += pos
-            neg_content += neg
+    return facts_content, pos_content
 
-    # Salvar arquivos
+def save_mapping(output_path, facts, pos, neg):
     with open(os.path.join(output_path, "facts.pl"), "w") as f:
-        f.write("\n".join(facts_content) + "\n")
+        f.write("\n".join(facts) + "\n")
     with open(os.path.join(output_path, "pos.pl"), "w") as f:
-        f.write("\n".join(pos_content) + "\n")
+        f.write("\n".join(pos) + "\n")
     with open(os.path.join(output_path, "neg.pl"), "w") as f:
-        f.write("\n".join(neg_content) + "\n")
+        f.write("\n".join(neg) + "\n")
 
 
 def apply_mappings(source_path, output_path, mappings, target_predicate, target_modes):
@@ -135,3 +137,53 @@ def apply_mappings(source_path, output_path, mappings, target_predicate, target_
         index_path = os.path.join(output_path, str(index))
         os.makedirs(index_path, exist_ok=True)
         apply_mapping(source_path, index_path, mapping["predicate_mappings"], target_predicate, target_modes)
+
+def read_domain(domain_path, folds = None):
+    """
+    Processa o dataset aplicando os mapeamentos nos arquivos.
+
+    - Se um predicado de facts.pl for mapeado para um predicado-alvo, ele vai para pos.pl
+    - Se um predicado de pos.pl do domínio de origem **não for mapeado para um predicado-alvo**, ele vai para facts.pl
+    """
+
+    modes = parse_modes_file(os.path.join(domain_path, "fold00", "modes.pl"))
+
+    # Criar buffers para armazenar os conteúdos
+    domain_data = {
+        "nodes": {},
+        "edges": {}
+    }
+
+    for predicate, arg_types in modes.items():
+        if predicate not in domain_data["edges"]:
+            domain_data["edges"][predicate] = set()
+
+            for arg_type in arg_types:
+                if arg_type not in domain_data["nodes"]:
+                    domain_data["nodes"][arg_type] = set()
+
+    folds = folds if folds is not None else sorted(os.listdir(domain_path))
+
+    # Percorrer os folds
+    for fold in folds:
+        fold_path = os.path.join(domain_path, fold)
+        if not os.path.isdir(fold_path) or not fold.startswith("fold"):
+            continue  # Ignorar arquivos que não sejam pastas "foldXX"
+
+        # Processar cada arquivo dentro do fold
+        for filename in ["facts.pl", "pos.pl"]:
+            file_path = os.path.join(fold_path, filename)
+            if not os.path.exists(file_path):
+                continue
+
+            with open(file_path, "r") as infile:
+                for line in infile:
+                    line = line.strip()
+                    predicate = line.split("(")[0]
+                    args = line.split("(")[1][:-2].split(",")
+                    domain_data["edges"][predicate].add(tuple(args))
+                    for index, arg in enumerate(args):
+                        arg_type = modes[predicate][index]
+                        domain_data["nodes"][arg_type].add(arg)
+
+    return domain_data
