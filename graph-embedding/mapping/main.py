@@ -64,7 +64,7 @@ def mappings_workflow(train_folds="fold00"):
             shuffled = random.sample(list(solutions.get_robust_mappings()), k=len(solutions.get_robust_mappings()))  # shuffle com index
 
             counter = 0
-            threshold = 1000
+            threshold = 1000000
             for index, solution in tqdm(enumerate(shuffled)):
                 source_domain_mapped_data = generate_source_domain_mapped_data(
                     solution,
