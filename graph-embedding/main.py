@@ -3,7 +3,6 @@ from pathlib import Path
 from srlearn.rdn import RDNBoostTransferLearning
 
 from mapping.main import mappings_workflow
-from mapping.metrics import extract_graph_metrics, extract_vector_metrics_from_domain_file
 
 
 #from train.train_model import train

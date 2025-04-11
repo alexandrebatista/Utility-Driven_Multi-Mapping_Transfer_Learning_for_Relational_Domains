@@ -1,15 +1,13 @@
 import os
-from copy import deepcopy
 from pathlib import Path
 
 from mapping.apply_mappings import read_domain
 from mapping.mapping import generate_mappings, parse_modes_file
-from mapping.metrics import extract_vector_metrics_from_domain_file, \
-    cosine_sim, extract_vector_metrics_from_domain_data, extract_graph_metrics
+from mapping.metrics import cosine_sim, extract_vector_metrics_from_domain_data, extract_graph_metrics
 from mapping.utils import TopNMapper
 from mapping.apply_mappings import apply_mappings
 from tqdm import tqdm
-
+import random
 
 
 
@@ -20,55 +18,18 @@ def create_folder(path):
 
 
 def generate_source_domain_mapped_data(
-        mapping,
-        source_domain_data,
-        target_predicates,
-        target_nodes
+    mapping,
+    source_domain_data,
+    target_predicates,
 ):
-    source_domain_mapped_data = deepcopy(source_domain_data)
-    for source_predicate, target_predicate in mapping["predicate_mappings"].items():
-        if target_predicate is None:
-            source_domain_mapped_data["edges"].pop(source_predicate)
-        else:
-            if target_predicate not in source_domain_mapped_data["edges"]:
-                source_domain_mapped_data["edges"][target_predicate] = source_domain_mapped_data["edges"].pop(
-                    source_predicate)
-            else:
-                source_domain_mapped_data["edges"][target_predicate].update(
-                    source_domain_mapped_data["edges"].pop(source_predicate))
+    # Cópia dos dados
+    mapped_source_domain_data = {predicate: set() for predicate in target_predicates}
 
-    for source_type, target_type in mapping["type_mappings"].items():
-        if target_type is None:
-            source_domain_mapped_data["nodes"].pop(source_type)
-        else:
-            if target_type not in source_domain_mapped_data["nodes"]:
-                source_domain_mapped_data["nodes"][target_type] = source_domain_mapped_data["nodes"].pop(source_type)
-            else:
-                source_domain_mapped_data["nodes"][target_type].update(
-                    source_domain_mapped_data["nodes"].pop(source_type))
+    for predicate, args_instances in source_domain_data.items():
+        if mapping["predicate_mappings"][predicate] is not None:
+            mapped_source_domain_data[mapping["predicate_mappings"][predicate]].update(args_instances)
 
-    # Set to empty target predicates without a source
-    for predicate in target_predicates:
-        if predicate not in source_domain_mapped_data["edges"]:
-            source_domain_mapped_data["edges"][predicate] = set()
-
-    # Set to empty target nodes without a source
-    for node in target_nodes:
-        if node not in source_domain_mapped_data["nodes"]:
-            source_domain_mapped_data["nodes"][node] = set()
-
-    # Remove unmapped nodes
-    keys = list(source_domain_mapped_data["nodes"])
-    for node in keys:
-        if node not in target_nodes:
-            source_domain_mapped_data["nodes"].pop(node)
-
-    # Reorder edges and nodes to follow the same definition
-    source_domain_mapped_data["edges"] = {k: source_domain_mapped_data["edges"][k] for k in target_predicates if k in source_domain_mapped_data["edges"]}
-    source_domain_mapped_data["nodes"] = {k: source_domain_mapped_data["nodes"][k] for k in target_nodes if k in source_domain_mapped_data["nodes"]}
-
-    return source_domain_mapped_data
-
+    return mapped_source_domain_data
 
 def mappings_workflow(train_folds="fold00"):
     base_dir = "/home/alexandre/mestrado/graph-embedding/preprocessed"
@@ -79,7 +40,9 @@ def mappings_workflow(train_folds="fold00"):
         output_path = f"/home/alexandre/mestrado/graph-embedding/mapped_datasets/to_{target_domain_path.name}"
         create_folder(output_path)
 
-        target_domain_vec = extract_vector_metrics_from_domain_file(target_domain_path)
+        domain_data = read_domain(target_domain_path)
+        target_domain_modes = parse_modes_file(os.path.join(target_directory, "modes.pl"))
+        target_domain_vec = extract_vector_metrics_from_domain_data(domain_data, target_domain_modes)
 
         for source_domain_path in path.iterdir():
             if source_domain_path.name == target_domain_path.name or not source_domain_path.is_dir():
@@ -92,25 +55,30 @@ def mappings_workflow(train_folds="fold00"):
 
             print(f"\t {source_domain_path.name} : {len(solutions.get_robust_mappings())}")
 
-            target_predicates = solutions.get_target_predicates()
-            target_nodes = solutions.get_target_types()
-
             source_domain_data = read_domain(source_path)
             top_mapper = TopNMapper(N=3)
 
-            for index, solution in tqdm(enumerate(solutions.get_robust_mappings())):
+            shuffled = random.sample(list(solutions.get_robust_mappings()), k=len(solutions.get_robust_mappings()))  # shuffle com index
+
+            counter = 0
+            threshold = 1000
+            for index, solution in tqdm(enumerate(shuffled)):
                 source_domain_mapped_data = generate_source_domain_mapped_data(
                     solution,
                     source_domain_data,
-                    target_predicates,
-                    target_nodes
+                    list(target_domain_modes.keys())
                 )
 
-                source_domain_mapped_vec = extract_vector_metrics_from_domain_data(source_domain_mapped_data)
+                source_domain_mapped_vec = extract_vector_metrics_from_domain_data(source_domain_mapped_data, target_domain_modes)
 
                 similarity = cosine_sim(target_domain_vec, source_domain_mapped_vec)
+                solution["cos_similarity"] = similarity.item()
 
                 top_mapper.update(similarity, mapping_id=index, mapping_data=solution)
+                counter += 1
+
+                if counter > threshold:
+                    break
 
             top_mappings = top_mapper.get_top_mappings()
             create_folder(os.path.join(output_path, source_domain_path.name))

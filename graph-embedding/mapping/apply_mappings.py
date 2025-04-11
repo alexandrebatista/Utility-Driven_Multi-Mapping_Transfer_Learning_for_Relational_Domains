@@ -130,6 +130,7 @@ def save_mapping(output_path, facts, pos, neg):
 
 
 def apply_mappings(source_path, output_path, mappings, target_predicate, target_modes):
+
     with open(os.path.join(output_path, "mappings.json"), 'w') as f:
         json.dump(mappings, f)
 
@@ -149,18 +150,7 @@ def read_domain(domain_path, folds = None):
     modes = parse_modes_file(os.path.join(domain_path, "fold00", "modes.pl"))
 
     # Criar buffers para armazenar os conteúdos
-    domain_data = {
-        "nodes": {},
-        "edges": {}
-    }
-
-    for predicate, arg_types in modes.items():
-        if predicate not in domain_data["edges"]:
-            domain_data["edges"][predicate] = set()
-
-            for arg_type in arg_types:
-                if arg_type not in domain_data["nodes"]:
-                    domain_data["nodes"][arg_type] = set()
+    domain_data = {predicate: set() for predicate in modes}
 
     folds = folds if folds is not None else sorted(os.listdir(domain_path))
 
@@ -181,9 +171,6 @@ def read_domain(domain_path, folds = None):
                     line = line.strip()
                     predicate = line.split("(")[0]
                     args = line.split("(")[1][:-2].split(",")
-                    domain_data["edges"][predicate].add(tuple(args))
-                    for index, arg in enumerate(args):
-                        arg_type = modes[predicate][index]
-                        domain_data["nodes"][arg_type].add(arg)
+                    domain_data[predicate].add(tuple(args))
 
     return domain_data

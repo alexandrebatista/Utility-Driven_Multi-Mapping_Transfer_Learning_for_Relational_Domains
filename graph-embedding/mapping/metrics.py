@@ -1,46 +1,37 @@
 import numpy as np
-import networkx as nx
 from collections import defaultdict
 from scipy.spatial.distance import euclidean, cosine
-from mapping.apply_mappings import read_domain
 from sklearn.metrics.pairwise import cosine_similarity
 
 
-def extract_graph_metrics(domain_data, bin_edges=None):
+def extract_graph_metrics(domain_data, domain_modes, bin_edges=None):
     if bin_edges is None:
         bin_edges = [0, 1, 2, 4, 8, 16, 32, 64, 128, np.inf]
-
-    nodes_by_type = domain_data["nodes"]
-    edges_by_type = domain_data["edges"]
-
-    total_edges = sum(len(edges) for edges in edges_by_type.values())
-
-    total_nodes = 0
-    node_type_map = {}
-    for ntype, nodes in nodes_by_type.items():
-        total_nodes += len(nodes)
-        for node in nodes:
-            node_type_map[node] = ntype
 
     in_deg = defaultdict(int)
     out_deg = defaultdict(int)
     degs_by_type = defaultdict(lambda: {"in": [], "out": []})
+    node_types = set([x for xs in list(domain_modes.values()) for x in xs])
+    nodes_by_type = {key: set() for key in node_types}
     edge_type_counts = {}
 
-    G = nx.DiGraph()
-    G.add_nodes_from(node_type_map)
-
-    for rel_type, edge_set in edges_by_type.items():
+    total_edges = 0
+    for rel_type, edge_set in domain_data.items():
+        total_edges += len(edge_set)
         edge_type_counts[rel_type] = len(edge_set)
 
         for src, tgt in edge_set:
-            G.add_edge(src, tgt)
             out_deg[src] += 1
             in_deg[tgt] += 1
 
-    for node, dtype in node_type_map.items():
-        degs_by_type[dtype]["in"].append(in_deg[node])
-        degs_by_type[dtype]["out"].append(out_deg[node])
+            nodes_by_type[domain_modes[rel_type][0]].update([src])
+            nodes_by_type[domain_modes[rel_type][1]].update([tgt])
+
+    total_nodes = 0
+    for ntype, nodes in nodes_by_type.items():
+        total_nodes += len(nodes)
+        degs_by_type[ntype]["in"] += [in_deg[node] for node in nodes]
+        degs_by_type[ntype]["out"] += [out_deg[node] for node in nodes]
 
     def degree_stats(degree_list):
         if not degree_list:
@@ -58,11 +49,13 @@ def extract_graph_metrics(domain_data, bin_edges=None):
     def binned_histogram(degree_list, bin_edges):
         if not degree_list:
             return {f"{bin_edges[i]}–{bin_edges[i + 1] - 1}": 0 for i in range(len(bin_edges) - 1)}
+
         hist = np.histogram(degree_list, bins=bin_edges)[0]
-        return {
-            f"{bin_edges[i]}–{bin_edges[i + 1] - 1}": int(hist[i])
-            for i in range(len(hist))
-        }
+
+        if hist.sum() != 0:
+            hist = hist / hist.sum()
+
+        return {f"{bin_edges[i]}–{bin_edges[i + 1] - 1}": hist[i] for i in range(len(hist))}
 
     metrics = {
         "node_type_distribution": {
@@ -88,14 +81,6 @@ def extract_graph_metrics(domain_data, bin_edges=None):
             }
             for t, v in degs_by_type.items()
         },
-    }
-
-    # Componentes fortemente conectados
-    sccs = nx.strongly_connected_components(G)
-    sizes = [len(c) for c in sccs]
-    metrics["strongly_connected_components"] = {
-        "num_components": len(sizes),
-        "largest_component_size": max(sizes) if sizes else 0
     }
 
     return metrics
@@ -135,11 +120,6 @@ def metrics_to_vector(metrics, node_types, edge_types, bin_labels=None):
             for label in bin_labels:
                 vec.append(bins.get(label, 0))
 
-    # 5. Componentes fortemente conectados
-    scc = metrics["strongly_connected_components"]
-    vec.append(scc["num_components"])
-    vec.append(scc["largest_component_size"])
-
     return np.array(vec, dtype=np.float32)
 
 
@@ -159,20 +139,11 @@ def compare_graphs(vec1, vec2, metric="euclidean"):
     else:
         raise ValueError(f"Métrica desconhecida: {metric}")
 
-
-def extract_vector_metrics_from_domain_file(domain_path):
-    domain_data = read_domain(domain_path)
-    metrics = extract_graph_metrics(domain_data)
-
+def extract_vector_metrics_from_domain_data(domain_data, domain_modes):
+    metrics = extract_graph_metrics(domain_data, domain_modes)
+    node_types = set([x for xs in list(domain_modes.values()) for x in xs])
+    predicates = list(domain_modes.keys())
     vec = metrics_to_vector(metrics,
-                            node_types=list(domain_data["nodes"].keys()),
-                            edge_types=list(domain_data["edges"].keys()))
-    return vec
-
-def extract_vector_metrics_from_domain_data(domain_data):
-    metrics = extract_graph_metrics(domain_data)
-
-    vec = metrics_to_vector(metrics,
-                            node_types=list(domain_data["nodes"].keys()),
-                            edge_types=list(domain_data["edges"].keys()))
+                            node_types=node_types,
+                            edge_types=predicates)
     return vec
