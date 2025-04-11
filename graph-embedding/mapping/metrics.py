@@ -20,12 +20,19 @@ def extract_graph_metrics(domain_data, domain_modes, bin_edges=None):
         total_edges += len(edge_set)
         edge_type_counts[rel_type] = len(edge_set)
 
-        for src, tgt in edge_set:
+        for edge in edge_set:
+            if len(edge) == 1:
+                src = tgt = edge[0]
+                src_type = tgt_type = domain_modes[rel_type][0]
+            else:
+                src, tgt = edge
+                src_type, tgt_type = domain_modes[rel_type]
+            # TODO: Add support to ternary relations. Chatgpt suggestion: replace the ternary relation per a new node and 3 binary relations
+
             out_deg[src] += 1
             in_deg[tgt] += 1
-
-            nodes_by_type[domain_modes[rel_type][0]].update([src])
-            nodes_by_type[domain_modes[rel_type][1]].update([tgt])
+            nodes_by_type[src_type].update([src])
+            nodes_by_type[tgt_type].update([tgt])
 
     total_nodes = 0
     for ntype, nodes in nodes_by_type.items():

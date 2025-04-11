@@ -36,6 +36,9 @@ def mappings_workflow(train_folds="fold00"):
 
     path = Path(base_dir)
     for target_domain_path in path.iterdir():
+        if target_domain_path.name == "uwcse":
+            continue
+
         target_directory = f"{base_dir}/{target_domain_path.name}/fold00"
         output_path = f"/home/alexandre/mestrado/graph-embedding/mapped_datasets/to_{target_domain_path.name}"
         create_folder(output_path)
