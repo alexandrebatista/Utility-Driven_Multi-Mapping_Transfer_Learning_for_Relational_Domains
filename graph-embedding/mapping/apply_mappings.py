@@ -8,12 +8,14 @@ from torch.cuda import graph
 from mapping.mapping import parse_modes_file
 
 
-def apply_mapping_to_predicate(line, predicate_mapping):
+def apply_mapping_to_predicate(line, mapping):
     """
     Aplica o mapeamento a uma linha contendo um predicate. Se o predicate não tiver um mapeamento, retorna None.
     Se a linha não for um predicate válido, mantém a linha original.
     """
     line = line.strip()
+
+    predicate_mappings = mapping["predicate_mappings"]
 
     # Se for uma linha vazia ou um comentário, mantém a linha
     if not line or line.startswith("%"):
@@ -22,12 +24,13 @@ def apply_mapping_to_predicate(line, predicate_mapping):
     # Extrair o predicado e os argumentos
     predicate = line.split("(")[0]
     args = line.split("(")[1][:-2].split(",")
+    args = [f"{mapping["id"]}_{arg}" for arg in args]
 
     # Se o predicate não tiver um mapeamento, remover a linha
-    if predicate not in predicate_mapping or predicate_mapping[predicate] is None:
+    if predicate not in predicate_mappings or predicate_mappings[predicate] is None:
         return None, None
 
-    new_predicate = predicate_mapping[predicate]
+    new_predicate = predicate_mappings[predicate]
     mapped_line = f"{new_predicate}({','.join(args)})."
     return mapped_line, new_predicate
 
@@ -66,7 +69,7 @@ def generate_neg(facts, pos, target_modes):
 
     return neg
 
-def apply_mapping(source_path, output_path, predicate_mapping, target_predicate, target_modes):
+def apply_mapping(source_path, output_path, mapping, target_predicate, target_modes):
     """
     Processa o dataset aplicando os mapeamentos nos arquivos.
 
@@ -77,6 +80,7 @@ def apply_mapping(source_path, output_path, predicate_mapping, target_predicate,
         os.makedirs(output_path)
 
     # Criar buffers para armazenar os conteúdos
+    nodes_replacement = {}
     facts_content = []
     pos_content = []
     neg_content = []
@@ -98,7 +102,7 @@ def apply_mapping(source_path, output_path, predicate_mapping, target_predicate,
 
             with open(file_path, "r") as infile:
                 for line in infile:
-                    mapped_line, mapped_predicate = apply_mapping_to_predicate(line, predicate_mapping)
+                    mapped_line, mapped_predicate = apply_mapping_to_predicate(line, mapping)
 
                     if mapped_line:
                         if filename == "facts.pl":
@@ -147,7 +151,7 @@ def apply_mappings(source_path, output_path, mappings, target_predicate, target_
     for index, mapping in enumerate(mappings):
         index_path = os.path.join(output_path, str(index))
         os.makedirs(index_path, exist_ok=True)
-        apply_mapping(source_path, index_path, mapping["predicate_mappings"], target_predicate, target_modes)
+        apply_mapping(source_path, index_path, mapping, target_predicate, target_modes)
 
 def read_domain(domain_path, folds = None):
     """

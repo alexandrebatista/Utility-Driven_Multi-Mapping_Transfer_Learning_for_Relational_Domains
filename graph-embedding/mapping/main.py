@@ -47,6 +47,8 @@ def mappings_workflow(train_folds="fold00"):
         target_domain_modes = parse_modes_file(os.path.join(target_directory, "modes.pl"))
         target_domain_vec = extract_vector_metrics_from_domain_data(domain_data, target_domain_modes)
 
+        mapping_id_counter = 0
+
         for source_domain_path in path.iterdir():
             if source_domain_path.name == target_domain_path.name or not source_domain_path.is_dir():
                 continue
@@ -76,6 +78,10 @@ def mappings_workflow(train_folds="fold00"):
 
                 similarity = cosine_sim(target_domain_vec, source_domain_mapped_vec)
                 solution["cos_similarity"] = similarity.item()
+                solution["source"] = source_domain_path.name
+                solution["target"] = target_domain_path.name
+                solution["id"] = mapping_id_counter
+                mapping_id_counter += 1
 
                 top_mapper.update(similarity, mapping_id=index, mapping_data=solution)
                 counter += 1
