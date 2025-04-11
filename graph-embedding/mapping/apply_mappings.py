@@ -79,6 +79,7 @@ def apply_mapping(source_path, output_path, predicate_mapping, target_predicate,
     # Criar buffers para armazenar os conteúdos
     facts_content = []
     pos_content = []
+    neg_content = []
 
     # Percorrer os folds
     for fold in sorted(os.listdir(source_path)):
@@ -115,10 +116,19 @@ def apply_mapping(source_path, output_path, predicate_mapping, target_predicate,
 
         # Gerar neg.pl aqui
         if facts and pos:
-            facts_content.append(facts)
-            pos_content.append(pos)
+            neg = generate_neg(facts, pos, target_modes)
 
-    return facts_content, pos_content
+            facts_content += facts
+            pos_content += pos
+            neg_content += neg
+
+            # Salvar arquivos
+        with open(os.path.join(output_path, "facts.pl"), "w") as f:
+            f.write("\n".join(facts_content) + "\n")
+        with open(os.path.join(output_path, "pos.pl"), "w") as f:
+            f.write("\n".join(pos_content) + "\n")
+        with open(os.path.join(output_path, "neg.pl"), "w") as f:
+            f.write("\n".join(neg_content) + "\n")
 
 def save_mapping(output_path, facts, pos, neg):
     with open(os.path.join(output_path, "facts.pl"), "w") as f:
