@@ -4,7 +4,7 @@ from pathlib import Path
 from mapping.apply_mappings import read_domain
 from mapping.mapping import generate_mappings, parse_modes_file
 from mapping.metrics import cosine_sim, extract_vector_metrics_from_domain_data, extract_graph_metrics
-from mapping.utils import TopNMapper
+from mapping.utils import TopKMapper
 from mapping.apply_mappings import apply_mappings
 from tqdm import tqdm
 import random
@@ -49,6 +49,8 @@ def mappings_workflow(train_folds="fold00"):
 
         mapping_id_counter = 0
 
+        print(f"to {target_domain_path.name}")
+
         for source_domain_path in path.iterdir():
             if source_domain_path.name == target_domain_path.name or not source_domain_path.is_dir():
                 continue
@@ -61,7 +63,8 @@ def mappings_workflow(train_folds="fold00"):
             print(f"\t {source_domain_path.name} : {len(solutions.get_robust_mappings())}")
 
             source_domain_data = read_domain(source_path)
-            top_mapper = TopNMapper(N=3)
+            best_mappings_heap = TopKMapper(K=3, mode="max")
+            worst_mappings_heap = TopKMapper(K=3, mode="min")
 
             shuffled = random.sample(list(solutions.get_robust_mappings()), k=len(solutions.get_robust_mappings()))  # shuffle com index
 
@@ -83,20 +86,27 @@ def mappings_workflow(train_folds="fold00"):
                 solution["id"] = mapping_id_counter
                 mapping_id_counter += 1
 
-                top_mapper.update(similarity, mapping_id=index, mapping_data=solution)
+                best_mappings_heap.update(similarity, mapping_id=index, mapping_data=solution)
+                worst_mappings_heap.update(similarity, mapping_id=index, mapping_data=solution)
                 counter += 1
 
                 if counter > threshold:
                     break
 
-            top_mappings = top_mapper.get_top_mappings()
-            create_folder(os.path.join(output_path, source_domain_path.name))
+            best_mappings = best_mappings_heap.get_mappings()
+            worst_mappings = worst_mappings_heap.get_mappings()
+
+            create_folder(os.path.join(output_path, "best", source_domain_path.name))
+            create_folder(os.path.join(output_path, "worst", source_domain_path.name))
+
             apply_mappings(source_path,
-                           os.path.join(output_path, source_domain_path.name),
-                           [item[2] for item in top_mappings],
+                           os.path.join(output_path, "best", source_domain_path.name),
+                           [item[2] for item in best_mappings],
                            solutions.get_target_target_predicate(),
                            solutions.get_target_modes())
 
-            # extract_vector_metrics_from_domain_file("./preprocessed/cora")
-
-            print(f"to {target_domain_path.name}")
+            apply_mappings(source_path,
+                           os.path.join(output_path, "worst", source_domain_path.name),
+                           [item[2] for item in worst_mappings],
+                           solutions.get_target_target_predicate(),
+                           solutions.get_target_modes())
