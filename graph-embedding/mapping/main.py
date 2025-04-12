@@ -3,7 +3,7 @@ from pathlib import Path
 
 from mapping.apply_mappings import read_domain
 from mapping.mapping import generate_mappings, parse_modes_file
-from mapping.metrics import cosine_sim, extract_vector_metrics_from_domain_data, extract_graph_metrics
+from mapping.metrics import compare_graphs, extract_graph_metrics
 from mapping.utils import TopKMapper
 from mapping.apply_mappings import apply_mappings
 from tqdm import tqdm
@@ -45,7 +45,8 @@ def mappings_workflow(train_folds="fold00"):
 
         domain_data = read_domain(target_domain_path)
         target_domain_modes = parse_modes_file(os.path.join(target_directory, "modes.pl"))
-        target_domain_vec = extract_vector_metrics_from_domain_data(domain_data, target_domain_modes)
+
+        target_metrics = extract_graph_metrics(domain_data, target_domain_modes)
 
         mapping_id_counter = 0
 
@@ -77,9 +78,9 @@ def mappings_workflow(train_folds="fold00"):
                     list(target_domain_modes.keys())
                 )
 
-                source_domain_mapped_vec = extract_vector_metrics_from_domain_data(source_domain_mapped_data, target_domain_modes)
+                source_domain_mapped_metrics = extract_graph_metrics(source_domain_mapped_data, target_domain_modes)
 
-                similarity = cosine_sim(target_domain_vec, source_domain_mapped_vec)
+                similarity = compare_graphs(target_metrics, source_domain_mapped_metrics)
                 solution["cos_similarity"] = similarity.item()
                 solution["source"] = source_domain_path.name
                 solution["target"] = target_domain_path.name

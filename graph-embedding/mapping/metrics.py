@@ -1,5 +1,5 @@
 import numpy as np
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from scipy.spatial.distance import euclidean, cosine
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -55,14 +55,20 @@ def extract_graph_metrics(domain_data, domain_modes, bin_edges=None):
 
     def binned_histogram(degree_list, bin_edges):
         if not degree_list:
-            return {f"{bin_edges[i]}–{bin_edges[i + 1] - 1}": 0 for i in range(len(bin_edges) - 1)}
+            return OrderedDict(
+                (f"{bin_edges[i]}–{bin_edges[i + 1] - 1 if bin_edges[i + 1] != float('inf') else 'inf'}", 0)
+                for i in range(len(bin_edges) - 1)
+            )
 
         hist = np.histogram(degree_list, bins=bin_edges)[0]
 
         if hist.sum() != 0:
             hist = hist / hist.sum()
 
-        return {f"{bin_edges[i]}–{bin_edges[i + 1] - 1}": hist[i] for i in range(len(hist))}
+        return OrderedDict(
+            (f"{bin_edges[i]}–{bin_edges[i + 1] - 1 if bin_edges[i + 1] != float('inf') else 'inf'}", hist[i])
+            for i in range(len(hist))
+        )
 
     metrics = {
         "node_type_distribution": {
@@ -136,15 +142,36 @@ def cosine_sim(v1, v2):
     return cosine_similarity(v1, v2)[0][0]
 
 
-def compare_graphs(vec1, vec2, metric="euclidean"):
-    if metric == "euclidean":
-        return euclidean(vec1, vec2)
-    elif metric == "cosine":
-        return cosine(vec1, vec2)
-    elif metric == "manhattan":
-        return np.sum(np.abs(vec1 - vec2))
-    else:
-        raise ValueError(f"Métrica desconhecida: {metric}")
+def KL(target, candidate, eps=1e-10):
+    a = np.asarray(target, dtype=np.float32) + eps
+    b = np.asarray(candidate, dtype=np.float32) + eps
+    return np.sum(a * np.log(a / b))
+
+
+def compare_graphs(target_metrics, candidate_metrics):
+    node_kl = KL(list(target_metrics["node_type_distribution"].values()),
+                 list(candidate_metrics["node_type_distribution"].values()))
+
+    edge_kl = KL(list(target_metrics["edge_type_distribution"].values()),
+                 list(candidate_metrics["edge_type_distribution"].values()))
+
+    degree_kl_in = {}
+    degree_kl_out = {}
+    for label in target_metrics["degree_histograms"]:
+        degree_kl_in[label] = KL(list(target_metrics["degree_histograms"][label]["in"].values()),
+                                 list(candidate_metrics["degree_histograms"][label]["in"].values()))
+        degree_kl_out[label] = KL(list(target_metrics["degree_histograms"][label]["out"].values()),
+                                 list(candidate_metrics["degree_histograms"][label]["out"].values()))
+
+    out = {
+        "node_kl": node_kl,
+        "edge_kl": edge_kl,
+        "degree_kl_in": degree_kl_in,
+        "degree_kl_out": degree_kl_out
+    }
+
+    return out
+
 
 def extract_vector_metrics_from_domain_data(domain_data, domain_modes):
     metrics = extract_graph_metrics(domain_data, domain_modes)
