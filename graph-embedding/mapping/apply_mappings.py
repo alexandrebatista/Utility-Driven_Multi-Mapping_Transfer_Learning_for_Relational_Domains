@@ -37,15 +37,15 @@ def apply_mapping_to_predicate(line, mapping):
 def generate_neg(facts, pos, target_modes):
     target_predicate = pos[0].split("(")[0]
 
-    type1 = target_modes[target_predicate][0]
-    type2 = target_modes[target_predicate][1]
+    type1, type2 = target_modes[target_predicate]
 
     type1_instances_set = set()
     type1_instances_list = []
     type2_instances_set = set()
     type2_instances_list = []
 
-    for item in facts + pos:
+    data = facts + pos
+    for item in data:
         predicate = item.split("(")[0]
         args_types = target_modes[predicate]
         args = item.split("(")[1][:-2].split(",")

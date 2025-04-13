@@ -163,14 +163,16 @@ def compare_graphs(target_metrics, candidate_metrics):
         degree_kl_out[label] = KL(list(target_metrics["degree_histograms"][label]["out"].values()),
                                  list(candidate_metrics["degree_histograms"][label]["out"].values()))
 
-    out = {
+    kl_divergences = {
         "node_kl": node_kl,
         "edge_kl": edge_kl,
         "degree_kl_in": degree_kl_in,
         "degree_kl_out": degree_kl_out
     }
 
-    return out
+    out_values = [node_kl, edge_kl, *list(degree_kl_in.values()), *list(degree_kl_out.values())]
+
+    return kl_divergences, np.sum(out_values)
 
 
 def extract_vector_metrics_from_domain_data(domain_data, domain_modes):

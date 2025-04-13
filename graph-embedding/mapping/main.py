@@ -64,8 +64,8 @@ def mappings_workflow(train_folds="fold00"):
             print(f"\t {source_domain_path.name} : {len(solutions.get_robust_mappings())}")
 
             source_domain_data = read_domain(source_path)
-            best_mappings_heap = TopKMapper(K=3, mode="max")
-            worst_mappings_heap = TopKMapper(K=3, mode="min")
+            best_mappings_heap = TopKMapper(K=3, mode="min")
+            worst_mappings_heap = TopKMapper(K=3, mode="max")
 
             shuffled = random.sample(list(solutions.get_robust_mappings()), k=len(solutions.get_robust_mappings()))  # shuffle com index
 
@@ -80,15 +80,18 @@ def mappings_workflow(train_folds="fold00"):
 
                 source_domain_mapped_metrics = extract_graph_metrics(source_domain_mapped_data, target_domain_modes)
 
-                similarity = compare_graphs(target_metrics, source_domain_mapped_metrics)
-                solution["cos_similarity"] = similarity.item()
+                kl_divergences, kl_divergence_total = compare_graphs(target_metrics, source_domain_mapped_metrics)
+
+                solution["kl_divergences"] = kl_divergences
+                solution["kl_total"] = kl_divergence_total.item()
+                solution["metrics"] = source_domain_mapped_metrics
                 solution["source"] = source_domain_path.name
                 solution["target"] = target_domain_path.name
                 solution["id"] = mapping_id_counter
                 mapping_id_counter += 1
 
-                best_mappings_heap.update(similarity, mapping_id=index, mapping_data=solution)
-                worst_mappings_heap.update(similarity, mapping_id=index, mapping_data=solution)
+                best_mappings_heap.update(kl_divergence_total, mapping_id=index, mapping_data=solution)
+                worst_mappings_heap.update(kl_divergence_total, mapping_id=index, mapping_data=solution)
                 counter += 1
 
                 if counter > threshold:
