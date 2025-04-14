@@ -56,7 +56,7 @@ def extract_graph_metrics(domain_data, domain_modes, bin_edges=None):
     def binned_histogram(degree_list, bin_edges):
         if not degree_list:
             return OrderedDict(
-                (f"{bin_edges[i]}–{bin_edges[i + 1] - 1 if bin_edges[i + 1] != float('inf') else 'inf'}", 0)
+                (f"{bin_edges[i]}-{bin_edges[i + 1] - 1 if bin_edges[i + 1] != float('inf') else 'inf'}", 0)
                 for i in range(len(bin_edges) - 1)
             )
 
