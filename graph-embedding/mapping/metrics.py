@@ -164,10 +164,10 @@ def compare_graphs(target_metrics, candidate_metrics):
                                  list(candidate_metrics["degree_histograms"][label]["out"].values()))
 
     kl_divergences = {
-        "node_kl": node_kl,
-        "edge_kl": edge_kl,
-        "degree_kl_in": degree_kl_in,
-        "degree_kl_out": degree_kl_out
+        "node_kl": node_kl.item(),
+        "edge_kl": edge_kl.item(),
+        "degree_kl_in": {label: degree_kl_in[label].item() for label in degree_kl_in},
+        "degree_kl_out": {label: degree_kl_out[label].item() for label in degree_kl_out}
     }
 
     out_values = [node_kl, edge_kl, *list(degree_kl_in.values()), *list(degree_kl_out.values())]

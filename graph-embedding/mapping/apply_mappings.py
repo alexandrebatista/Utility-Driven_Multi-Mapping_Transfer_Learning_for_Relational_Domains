@@ -36,13 +36,10 @@ def apply_mapping_to_predicate(line, mapping):
 
 def generate_neg(facts, pos, target_modes):
     target_predicate = pos[0].split("(")[0]
-
     type1, type2 = target_modes[target_predicate]
 
-    type1_instances_set = set()
-    type1_instances_list = []
-    type2_instances_set = set()
-    type2_instances_list = []
+    type1_instances = set()
+    type2_instances = set()
 
     data = facts + pos
     for item in data:
@@ -52,22 +49,27 @@ def generate_neg(facts, pos, target_modes):
 
         for index, arg_type in enumerate(args_types):
             if arg_type == type1:
-                type1_instances_set.add(args[index])
-                type1_instances_list.append(args[index])
+                type1_instances.add(args[index])
             if arg_type == type2:
-                type2_instances_set.add(args[index])
-                type2_instances_list.append(args[index])
+                type2_instances.add(args[index])
 
-    neg = []
+    type1_list = list(type1_instances)
+    type2_list = list(type2_instances)
 
-    while len(neg) < len(pos) * 2:
-        sample_index1 = random.randrange(len(type1_instances_list))
-        sample_index2 = random.randrange(len(type2_instances_list))
-        sample = f"{target_predicate}({type1_instances_list[sample_index1]},{type2_instances_list[sample_index2]})."
-        if sample not in pos and sample not in neg:
-            neg.append(sample)
+    pos_set = set(pos)
+    neg_set = set()
 
-    return neg
+    max_trials = len(pos) * 10  # Limite pra evitar loop infinito
+    trials = 0
+    while len(neg_set) < len(pos) * 2 and trials < max_trials:
+        arg1 = random.choice(type1_list)
+        arg2 = random.choice(type2_list)
+        candidate = f"{target_predicate}({arg1},{arg2})."
+        if candidate not in pos_set and candidate not in neg_set:
+            neg_set.add(candidate)
+        trials += 1
+
+    return list(neg_set)
 
 def apply_mapping(source_path, output_path, mapping, target_predicate, target_modes):
     """
@@ -80,10 +82,11 @@ def apply_mapping(source_path, output_path, mapping, target_predicate, target_mo
         os.makedirs(output_path)
 
     # Criar buffers para armazenar os conteúdos
-    nodes_replacement = {}
     facts_content = []
     pos_content = []
     neg_content = []
+
+    predicate_type1_arg, predicate_type2_arg = target_modes[target_predicate]
 
     # Percorrer os folds
     for fold in sorted(os.listdir(source_path)):
@@ -105,18 +108,11 @@ def apply_mapping(source_path, output_path, mapping, target_predicate, target_mo
                     mapped_line, mapped_predicate = apply_mapping_to_predicate(line, mapping)
 
                     if mapped_line:
-                        if filename == "facts.pl":
-                            # Se um fato foi mapeado para um predicado-alvo, mover para pos.pl
-                            if mapped_predicate == target_predicate:
-                                pos.append(mapped_line)
-                            else:
-                                facts.append(mapped_line)
-                        elif filename == "pos.pl":
-                            # Se um exemplo positivo não for mapeado para um predicado-alvo, mover para facts.pl
-                            if mapped_predicate == target_predicate:
-                                pos.append(mapped_line)
-                            else:
-                                facts.append(mapped_line)
+                        # Se um exemplo positivo não for mapeado para um predicado-alvo, mover para facts.pl
+                        if mapped_predicate == target_predicate:
+                            pos.append(mapped_line)
+                        else:
+                            facts.append(mapped_line)
 
         # Gerar neg.pl aqui
         if facts and pos:
