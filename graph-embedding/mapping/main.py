@@ -1,14 +1,62 @@
+import json
 import os
 from pathlib import Path
+
+from tqdm import tqdm
 
 from mapping.apply_mappings import read_domain
 from mapping.mapping import generate_mappings, parse_modes_file
 from mapping.metrics import compare_graphs, extract_graph_metrics
 from mapping.utils import TopKMapper
 from mapping.apply_mappings import apply_mappings
-from tqdm import tqdm
-import random
 
+from joblib import Parallel, delayed
+
+# Variáveis globais
+_source_domain_data = None
+_target_domain_modes = None
+_target_metrics = None
+
+
+def compute_metrics(index, solution, source_domain_data, target_domain_modes, target_metrics, source_domain_path, target_domain_path):
+    source_domain_mapped_data = generate_source_domain_mapped_data(
+        solution,
+        source_domain_data,
+        list(target_domain_modes.keys())
+    )
+
+    source_domain_mapped_metrics = extract_graph_metrics(source_domain_mapped_data, target_domain_modes)
+    kl_divergences, kl_divergence_total = compare_graphs(target_metrics, source_domain_mapped_metrics)
+
+    solution["kl_divergences"] = kl_divergences
+    solution["kl_total"] = kl_divergence_total.item()
+    solution["metrics"] = source_domain_mapped_metrics
+    solution["source"] = source_domain_path.name
+    solution["target"] = target_domain_path.name
+    solution["id"] = index
+
+    return kl_divergence_total, index, solution
+
+def process_all_mappings(solutions, source_domain_data, target_domain_modes, target_metrics, source_domain_path, target_domain_path):
+    best_mappings_heap = TopKMapper(K=3, mode="min")
+    worst_mappings_heap = TopKMapper(K=3, mode="max")
+
+    all_solutions = list(enumerate(solutions.get_robust_mappings()))
+
+    # tqdm no loop do Parallel
+    results = Parallel(n_jobs=-1)(
+        delayed(compute_metrics)(
+            index, solution, source_domain_data, target_domain_modes,
+            target_metrics, source_domain_path, target_domain_path
+        )
+        for index, solution in tqdm(all_solutions, desc="Calculando métricas", unit="map")
+    )
+
+    for kl_total, index, solution in results:
+        best_mappings_heap.update(kl_total, mapping_id=index, mapping_data=solution)
+        worst_mappings_heap.update(kl_total, mapping_id=index, mapping_data=solution)
+
+    return best_mappings_heap.get_mappings(), worst_mappings_heap.get_mappings()
 
 
 def create_folder(path):
@@ -31,6 +79,7 @@ def generate_source_domain_mapped_data(
 
     return mapped_source_domain_data
 
+
 def mappings_workflow(train_folds="fold00"):
     base_dir = "/home/alexandre/mestrado/graph-embedding/preprocessed"
 
@@ -48,7 +97,8 @@ def mappings_workflow(train_folds="fold00"):
 
         target_metrics = extract_graph_metrics(domain_data, target_domain_modes)
 
-        mapping_id_counter = 0
+        with open(os.path.join(output_path, "metrics.json"), 'w') as f:
+            json.dump(target_metrics, f)
 
         print(f"to {target_domain_path.name}")
 
@@ -64,41 +114,8 @@ def mappings_workflow(train_folds="fold00"):
             print(f"\t {source_domain_path.name} : {len(solutions.get_robust_mappings())}")
 
             source_domain_data = read_domain(source_path)
-            best_mappings_heap = TopKMapper(K=3, mode="min")
-            worst_mappings_heap = TopKMapper(K=3, mode="max")
 
-            shuffled = random.sample(list(solutions.get_robust_mappings()), k=len(solutions.get_robust_mappings()))  # shuffle com index
-
-            counter = 0
-            threshold = 1000000
-            for index, solution in tqdm(enumerate(shuffled)):
-                source_domain_mapped_data = generate_source_domain_mapped_data(
-                    solution,
-                    source_domain_data,
-                    list(target_domain_modes.keys())
-                )
-
-                source_domain_mapped_metrics = extract_graph_metrics(source_domain_mapped_data, target_domain_modes)
-
-                kl_divergences, kl_divergence_total = compare_graphs(target_metrics, source_domain_mapped_metrics)
-
-                solution["kl_divergences"] = kl_divergences
-                solution["kl_total"] = kl_divergence_total.item()
-                solution["metrics"] = source_domain_mapped_metrics
-                solution["source"] = source_domain_path.name
-                solution["target"] = target_domain_path.name
-                solution["id"] = mapping_id_counter
-                mapping_id_counter += 1
-
-                best_mappings_heap.update(kl_divergence_total, mapping_id=index, mapping_data=solution)
-                worst_mappings_heap.update(kl_divergence_total, mapping_id=index, mapping_data=solution)
-                counter += 1
-
-                if counter > threshold:
-                    break
-
-            best_mappings = best_mappings_heap.get_mappings()
-            worst_mappings = worst_mappings_heap.get_mappings()
+            best_mappings, worst_mappings = process_all_mappings(solutions, source_domain_data, target_domain_modes, target_metrics, source_domain_path, target_domain_path)
 
             create_folder(os.path.join(output_path, "best", source_domain_path.name))
             create_folder(os.path.join(output_path, "worst", source_domain_path.name))
