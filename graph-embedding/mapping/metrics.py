@@ -11,9 +11,14 @@ def extract_graph_metrics(domain_data, domain_modes, bin_edges=None):
     in_deg = defaultdict(int)
     out_deg = defaultdict(int)
     degs_by_type = defaultdict(lambda: {"in": [], "out": []})
-    node_types = set([x for xs in list(domain_modes.values()) for x in xs])
-    nodes_by_type = OrderedDict({key: set() for key in node_types})
-    edge_type_counts = {}
+
+    nodes_by_type = OrderedDict()
+    for node_types in domain_modes.values():
+        for type in node_types:
+            if type not in nodes_by_type:
+                nodes_by_type[type] = set()
+
+    edge_type_counts = OrderedDict()
 
     total_edges = 0
     for rel_type, edge_set in domain_data.items():

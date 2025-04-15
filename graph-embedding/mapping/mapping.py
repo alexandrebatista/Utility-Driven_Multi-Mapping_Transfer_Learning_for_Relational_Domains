@@ -1,5 +1,6 @@
 import os
 import re
+from collections import OrderedDict
 
 
 class Mapping:
@@ -121,7 +122,7 @@ def parse_modes_file(filepath):
     Cada chave é o nome de um predicado e o valor é uma lista de assinaturas
     (cada assinatura é uma lista de argumentos, ex: ['+Professor', '+Aluno']).
     """
-    modes = {}
+    modes = OrderedDict()
     with open(filepath, 'r') as f:
         for line in f:
             parsed = _parse_mode_line(line)
