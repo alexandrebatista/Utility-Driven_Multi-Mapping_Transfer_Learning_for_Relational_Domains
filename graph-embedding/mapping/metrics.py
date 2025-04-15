@@ -12,7 +12,7 @@ def extract_graph_metrics(domain_data, domain_modes, bin_edges=None):
     out_deg = defaultdict(int)
     degs_by_type = defaultdict(lambda: {"in": [], "out": []})
     node_types = set([x for xs in list(domain_modes.values()) for x in xs])
-    nodes_by_type = {key: set() for key in node_types}
+    nodes_by_type = OrderedDict({key: set() for key in node_types})
     edge_type_counts = {}
 
     total_edges = 0
@@ -56,8 +56,7 @@ def extract_graph_metrics(domain_data, domain_modes, bin_edges=None):
     def binned_histogram(degree_list, bin_edges):
         if not degree_list:
             return OrderedDict(
-                (f"{bin_edges[i]}-{bin_edges[i + 1] - 1 if bin_edges[i + 1] != float('inf') else 'inf'}", 0)
-                for i in range(len(bin_edges) - 1)
+                (f"{bin_edges[i]}-{bin_edges[i + 1] - 1 if bin_edges[i + 1] != float('inf') else 'inf'}", 0) for i in range(len(bin_edges) - 1)
             )
 
         hist = np.histogram(degree_list, bins=bin_edges)[0]
@@ -66,7 +65,7 @@ def extract_graph_metrics(domain_data, domain_modes, bin_edges=None):
             hist = hist / hist.sum()
 
         return OrderedDict(
-            (f"{bin_edges[i]}–{bin_edges[i + 1] - 1 if bin_edges[i + 1] != float('inf') else 'inf'}", hist[i])
+            (f"{bin_edges[i]}-{bin_edges[i + 1] - 1 if bin_edges[i + 1] != float('inf') else 'inf'}", hist[i])
             for i in range(len(hist))
         )
 
@@ -79,14 +78,14 @@ def extract_graph_metrics(domain_data, domain_modes, bin_edges=None):
             t: c / total_edges
             for t, c in edge_type_counts.items()
         },
-        "in_degree_stats": {
-            t: degree_stats(v["in"])
-            for t, v in degs_by_type.items()
-        },
-        "out_degree_stats": {
-            t: degree_stats(v["out"])
-            for t, v in degs_by_type.items()
-        },
+        # "in_degree_stats": {
+        #     t: degree_stats(v["in"])
+        #     for t, v in degs_by_type.items()
+        # },
+        # "out_degree_stats": {
+        #     t: degree_stats(v["out"])
+        #     for t, v in degs_by_type.items()
+        # },
         "degree_histograms": {
             t: {
                 "in": binned_histogram(v["in"], bin_edges),
@@ -147,13 +146,22 @@ def KL(target, candidate, eps=1e-10):
     b = np.asarray(candidate, dtype=np.float32) + eps
     return np.sum(a * np.log(a / b))
 
-
 def compare_graphs(target_metrics, candidate_metrics):
-    node_kl = KL(list(target_metrics["node_type_distribution"].values()),
-                 list(candidate_metrics["node_type_distribution"].values()))
+    def get_stats(stat_name):
+        target_stat = []
+        candidate_stat = []
 
-    edge_kl = KL(list(target_metrics["edge_type_distribution"].values()),
-                 list(candidate_metrics["edge_type_distribution"].values()))
+        for key, value in target_metrics[stat_name].items():
+            target_stat.append(value)
+            if key not in candidate_metrics[stat_name]:
+                pass
+            candidate_stat.append(candidate_metrics[stat_name][key])
+
+        return target_stat, candidate_stat
+
+    node_kl = KL(*get_stats("node_type_distribution"))
+
+    edge_kl = KL(*get_stats("edge_type_distribution"))
 
     degree_kl_in = {}
     degree_kl_out = {}
