@@ -144,10 +144,10 @@ def apply_mappings(source_path, output_path, mappings, target_predicate, target_
     with open(os.path.join(output_path, "mappings.json"), 'w') as f:
         json.dump(mappings, f)
 
-    for index, mapping in enumerate(mappings):
-        index_path = os.path.join(output_path, str(index))
-        os.makedirs(index_path, exist_ok=True)
-        apply_mapping(source_path, index_path, mapping, target_predicate, target_modes)
+    for mapping in mappings:
+        mapping_path = os.path.join(output_path, str(mapping["id"]))
+        os.makedirs(mapping_path, exist_ok=True)
+        apply_mapping(source_path, mapping_path, mapping, target_predicate, target_modes)
 
 def read_domain(domain_path, folds = None):
     """
