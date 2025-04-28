@@ -1,6 +1,6 @@
 import numpy as np
 from collections import defaultdict, OrderedDict
-from scipy.spatial.distance import euclidean, cosine
+from scipy.special import rel_entr
 from sklearn.metrics.pairwise import cosine_similarity
 
 
@@ -75,6 +75,8 @@ def extract_graph_metrics(domain_data, domain_modes, bin_edges=None):
         )
 
     metrics = {
+        "total_nodes": total_nodes,
+        "total_edges": total_edges,
         "node_type_distribution": {
             t: len(nodes) / total_nodes
             for t, nodes in nodes_by_type.items()
@@ -151,6 +153,9 @@ def KL(target, candidate, eps=1e-10):
     b = np.asarray(candidate, dtype=np.float32) + eps
     return np.sum(a * np.log(a / b))
 
+# def KL(target, candidate):
+#     return sum(rel_entr(target, candidate))
+
 def compare_graphs(target_metrics, candidate_metrics):
     def get_stats(stat_name):
         target_stat = []
@@ -183,9 +188,7 @@ def compare_graphs(target_metrics, candidate_metrics):
         "degree_kl_out": {label: degree_kl_out[label].item() for label in degree_kl_out}
     }
 
-    out_values = [node_kl, edge_kl, *list(degree_kl_in.values()), *list(degree_kl_out.values())]
-
-    return kl_divergences, np.sum(out_values)
+    return kl_divergences
 
 
 def extract_vector_metrics_from_domain_data(domain_data, domain_modes):

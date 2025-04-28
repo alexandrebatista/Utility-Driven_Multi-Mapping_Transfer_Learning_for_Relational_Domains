@@ -18,7 +18,8 @@ _target_domain_modes = None
 _target_metrics = None
 
 
-def compute_metrics(index, solution, source_domain_data, target_domain_modes, target_metrics, source_domain_path, target_domain_path):
+def compute_metrics(index, solution, source_domain_data, target_domain_modes, target_metrics, source_domain_path,
+                    target_domain_path):
     source_domain_mapped_data = generate_source_domain_mapped_data(
         solution,
         source_domain_data,
@@ -26,20 +27,27 @@ def compute_metrics(index, solution, source_domain_data, target_domain_modes, ta
     )
 
     source_domain_mapped_metrics = extract_graph_metrics(source_domain_mapped_data, target_domain_modes)
-    kl_divergences, kl_divergence_total = compare_graphs(target_metrics, source_domain_mapped_metrics)
+    kl_divergences = compare_graphs(target_metrics, source_domain_mapped_metrics)
 
     solution["kl_divergences"] = kl_divergences
-    solution["kl_total"] = kl_divergence_total.item()
     solution["metrics"] = source_domain_mapped_metrics
     solution["source"] = source_domain_path.name
     solution["target"] = target_domain_path.name
     solution["id"] = index
 
-    return kl_divergence_total, index, solution
+    return kl_divergences, index, solution
 
-def process_all_mappings(solutions, source_domain_data, target_domain_modes, target_metrics, source_domain_path, target_domain_path):
-    best_mappings_heap = TopKMapper(K=3, mode="min")
-    worst_mappings_heap = TopKMapper(K=3, mode="max")
+
+def process_all_mappings(solutions, source_domain_data, target_domain_modes, target_metrics, source_domain_path,
+                         target_domain_path):
+    mappings_heap_kl = {
+        "node_kl_ranking": TopKMapper(K=len(solutions.get_robust_mappings()), mode="min"),
+        "edge_kl_ranking": TopKMapper(K=len(solutions.get_robust_mappings()), mode="min"),
+        "degree_kl_in_kl_ranking": {predicate: TopKMapper(K=len(solutions.get_robust_mappings()), mode="min") for
+                                    predicate in solutions.get_target_types()},
+        "degree_kl_out_kl_ranking": {predicate: TopKMapper(K=len(solutions.get_robust_mappings()), mode="min") for
+                                     predicate in solutions.get_target_types()},
+    }
 
     all_solutions = list(enumerate(solutions.get_robust_mappings()))
 
@@ -52,12 +60,40 @@ def process_all_mappings(solutions, source_domain_data, target_domain_modes, tar
         for index, solution in tqdm(all_solutions, desc="Calculando métricas", unit="map")
     )
 
-    for kl_total, index, solution in results:
-        best_mappings_heap.update(kl_total, mapping_id=index, mapping_data=solution)
-        worst_mappings_heap.update(kl_total, mapping_id=index, mapping_data=solution)
+    for kl_divergences, index, solution in results:
+        mappings_heap_kl["node_kl_ranking"].update(kl_divergences["node_kl"], mapping_id=index, mapping_data=solution)
+        mappings_heap_kl["edge_kl_ranking"].update(kl_divergences["edge_kl"], mapping_id=index, mapping_data=solution)
 
-    return best_mappings_heap.get_mappings(), worst_mappings_heap.get_mappings()
+        for node_type in solutions.get_target_types():
+            mappings_heap_kl["degree_kl_in_kl_ranking"][node_type].update(kl_divergences["degree_kl_in"][node_type],
+                                                                          mapping_id=index,
+                                                                          mapping_data=solution)
 
+            mappings_heap_kl["degree_kl_out_kl_ranking"][node_type].update(kl_divergences["degree_kl_in"][node_type],
+                                                                           mapping_id=index,
+                                                                           mapping_data=solution)
+
+    return mappings_heap_kl
+
+def save_rankings(path, mappings_heap_kl):
+    with open(os.path.join(path, "ranking_node_kl.json"), 'w') as f:
+        json.dump(mappings_heap_kl["node_kl_ranking"].get_mappings(), f)
+
+    with open(os.path.join(path, "ranking_edge_kl.json"), 'w') as f:
+        json.dump(mappings_heap_kl["edge_kl_ranking"].get_mappings(), f)
+
+    for node_type in mappings_heap_kl["degree_kl_in_kl_ranking"]:
+
+        with open(os.path.join(path, f"ranking_{node_type}_in_kl.json"), 'w') as f:
+            json.dump(mappings_heap_kl["degree_kl_in_kl_ranking"][node_type].get_mappings(), f)
+
+        with open(os.path.join(path, f"ranking_{node_type}_out_kl.json"), 'w') as f:
+            json.dump(mappings_heap_kl["degree_kl_out_kl_ranking"][node_type].get_mappings(), f)
+
+
+def save_mappings(path, mappings):
+    with open(os.path.join(path, "mappings.json"), 'w') as f:
+        json.dump(mappings, f)
 
 def create_folder(path):
     path = Path(path)
@@ -66,9 +102,9 @@ def create_folder(path):
 
 
 def generate_source_domain_mapped_data(
-    mapping,
-    source_domain_data,
-    target_predicates,
+        mapping,
+        source_domain_data,
+        target_predicates,
 ):
     # Cópia dos dados
     mapped_source_domain_data = {predicate: set() for predicate in target_predicates}
@@ -115,19 +151,19 @@ def mappings_workflow(train_folds="fold00"):
 
             source_domain_data = read_domain(source_path)
 
-            best_mappings, worst_mappings = process_all_mappings(solutions, source_domain_data, target_domain_modes, target_metrics, source_domain_path, target_domain_path)
+            mappings_heap_kl = process_all_mappings(solutions, source_domain_data, target_domain_modes, target_metrics,
+                                                 source_domain_path, target_domain_path)
 
-            create_folder(os.path.join(output_path, "best", source_domain_path.name))
-            create_folder(os.path.join(output_path, "worst", source_domain_path.name))
+            create_folder(os.path.join(output_path, source_domain_path.name, "rankings"))
 
-            apply_mappings(source_path,
-                           os.path.join(output_path, "best", source_domain_path.name),
-                           [item[2] for item in best_mappings],
-                           solutions.get_target_target_predicate(),
-                           solutions.get_target_modes())
+            save_rankings(path=os.path.join(output_path, source_domain_path.name, "rankings"), mappings_heap_kl=mappings_heap_kl)
+            save_mappings(os.path.join(output_path, source_domain_path.name), solutions.get_robust_mappings())
 
-            apply_mappings(source_path,
-                           os.path.join(output_path, "worst", source_domain_path.name),
-                           [item[2] for item in worst_mappings],
-                           solutions.get_target_target_predicate(),
-                           solutions.get_target_modes())
+            # create_folder(os.path.join(output_path, "best", source_domain_path.name))
+            # create_folder(os.path.join(output_path, "worst", source_domain_path.name))
+            #
+            # apply_mappings(source_path,
+            #                os.path.join(output_path, "best", source_domain_path.name),
+            #                [item[2] for item in best_mappings],
+            #                solutions.get_target_target_predicate(),
+            #                solutions.get_target_modes())
