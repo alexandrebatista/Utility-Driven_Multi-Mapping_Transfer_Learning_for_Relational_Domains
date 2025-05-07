@@ -54,10 +54,12 @@ def rank_by_key(solutions, key, node_type=None, metric="kl_divergences", ranking
 
 def aggregate_ranks(solutions):
     for solution in solutions:
-        ranks = ([solution["ranking_kl"]["node_kl"]] +
-                 [solution["ranking_kl"]["edge_kl"]] +
-                 list(solution["ranking_kl"]["degree_kl_in"].values()) +
-                 list(solution["ranking_kl"]["degree_kl_out"].values()))
+        # ranks = ([solution["ranking_kl"]["node_kl"]] +
+        #          [solution["ranking_kl"]["edge_kl"]] +
+        #          list(solution["ranking_kl"]["degree_kl_in"].values()) +
+        #          list(solution["ranking_kl"]["degree_kl_out"].values()))
+
+        ranks = [solution["ranking_kl"]["node_kl"], solution["ranking_kl"]["edge_kl"]]
 
 
         solution["mean_ranking_kl"] = sum(ranks) / len(ranks)

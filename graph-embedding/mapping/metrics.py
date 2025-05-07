@@ -74,15 +74,18 @@ def extract_graph_metrics(domain_data, domain_modes, bin_edges=None):
             for i in range(len(hist))
         )
 
+    nodes_prior = int(total_nodes * 0.1)
+    edges_prior = int(total_edges * 0.1)
+
     metrics = {
         "total_nodes": total_nodes,
         "total_edges": total_edges,
         "node_type_distribution": {
-            t: len(nodes) / total_nodes
+            t: (len(nodes) + nodes_prior) / (total_nodes + nodes_prior)
             for t, nodes in nodes_by_type.items()
         },
         "edge_type_distribution": {
-            t: c / total_edges
+            t: (c + edges_prior) / (total_edges + edges_prior)
             for t, c in edge_type_counts.items()
         },
         # "in_degree_stats": {
@@ -93,13 +96,13 @@ def extract_graph_metrics(domain_data, domain_modes, bin_edges=None):
         #     t: degree_stats(v["out"])
         #     for t, v in degs_by_type.items()
         # },
-        "degree_histograms": {
-            t: {
-                "in": binned_histogram(v["in"], bin_edges),
-                "out": binned_histogram(v["out"], bin_edges)
-            }
-            for t, v in degs_by_type.items()
-        },
+        # "degree_histograms": {
+        #     t: {
+        #         "in": binned_histogram(v["in"], bin_edges),
+        #         "out": binned_histogram(v["out"], bin_edges)
+        #     }
+        #     for t, v in degs_by_type.items()
+        # },
     }
 
     return metrics
@@ -148,13 +151,13 @@ def cosine_sim(v1, v2):
     return cosine_similarity(v1, v2)[0][0]
 
 
-def KL(target, candidate, eps=1e-10):
-    a = np.asarray(target, dtype=np.float32) + eps
-    b = np.asarray(candidate, dtype=np.float32) + eps
-    return np.sum(a * np.log(a / b))
+# def KL(target, candidate, eps=1e-10):
+#     a = np.asarray(target, dtype=np.float32) + eps
+#     b = np.asarray(candidate, dtype=np.float32) + eps
+#     return np.sum(a * np.log(a / b))
 
-# def KL(target, candidate):
-#     return sum(rel_entr(target, candidate))
+def KL(target, candidate):
+    return sum(rel_entr(target, candidate))
 
 def compare_graphs(target_metrics, candidate_metrics):
     def get_stats(stat_name):
@@ -173,19 +176,19 @@ def compare_graphs(target_metrics, candidate_metrics):
 
     edge_kl = KL(*get_stats("edge_type_distribution"))
 
-    degree_kl_in = {}
-    degree_kl_out = {}
-    for label in target_metrics["degree_histograms"]:
-        degree_kl_in[label] = KL(list(target_metrics["degree_histograms"][label]["in"].values()),
-                                 list(candidate_metrics["degree_histograms"][label]["in"].values()))
-        degree_kl_out[label] = KL(list(target_metrics["degree_histograms"][label]["out"].values()),
-                                 list(candidate_metrics["degree_histograms"][label]["out"].values()))
+    # degree_kl_in = {}
+    # degree_kl_out = {}
+    # for label in target_metrics["degree_histograms"]:
+    #     degree_kl_in[label] = KL(list(target_metrics["degree_histograms"][label]["in"].values()),
+    #                              list(candidate_metrics["degree_histograms"][label]["in"].values()))
+    #     degree_kl_out[label] = KL(list(target_metrics["degree_histograms"][label]["out"].values()),
+    #                              list(candidate_metrics["degree_histograms"][label]["out"].values()))
 
     kl_divergences = {
         "node_kl": node_kl.item(),
         "edge_kl": edge_kl.item(),
-        "degree_kl_in": {label: degree_kl_in[label].item() for label in degree_kl_in},
-        "degree_kl_out": {label: degree_kl_out[label].item() for label in degree_kl_out}
+        # "degree_kl_in": {label: degree_kl_in[label].item() for label in degree_kl_in},
+        # "degree_kl_out": {label: degree_kl_out[label].item() for label in degree_kl_out}
     }
 
     return kl_divergences

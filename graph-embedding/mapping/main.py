@@ -54,9 +54,9 @@ def process_all_mappings(solutions, source_domain_data, target_domain_modes, tar
     rank_by_key(results, "node_kl")
     rank_by_key(results, "edge_kl")
 
-    for node_type in solutions.get_target_types():
-        rank_by_key(results, "degree_kl_in", node_type)
-        rank_by_key(results, "degree_kl_out", node_type)
+    # for node_type in solutions.get_target_types():
+    #     rank_by_key(results, "degree_kl_in", node_type)
+    #     rank_by_key(results, "degree_kl_out", node_type)
 
     aggregate_ranks(results)
 
@@ -117,24 +117,35 @@ def mappings_workflow(train_folds="fold00"):
             source_path = os.path.join(source_domain_path)
             source_directory = f"{source_path}/fold00"
 
-            solutions = generate_mappings(source_directory, target_directory)
+            mappings_path = Path(os.path.join(output_path, source_domain_path.name, "rankings"))
 
-            print(f"\t {source_domain_path.name} : {len(solutions.get_robust_mappings())}")
+            if mappings_path.exists():
+                pass
+            else:
+                solutions = generate_mappings(source_directory, target_directory)
 
-            source_domain_data = read_domain(source_path)
+                print(f"\t {source_domain_path.name} : {len(solutions.get_robust_mappings())}")
 
-            results = process_all_mappings(solutions, source_domain_data, target_domain_modes, target_metrics,
-                                                 source_domain_path, target_domain_path)
+                source_domain_data = read_domain(source_path)
 
-            create_folder(os.path.join(output_path, source_domain_path.name, "rankings"))
+                results = process_all_mappings(solutions, source_domain_data, target_domain_modes, target_metrics,
+                                                     source_domain_path, target_domain_path)
 
-            save_mappings(os.path.join(output_path, source_domain_path.name), results)
+                create_folder(os.path.join(output_path, source_domain_path.name, "rankings"))
 
-            # create_folder(os.path.join(output_path, "best", source_domain_path.name))
-            # create_folder(os.path.join(output_path, "worst", source_domain_path.name))
-            #
-            # apply_mappings(source_path,
-            #                os.path.join(output_path, "best", source_domain_path.name),
-            #                [item[2] for item in best_mappings],
-            #                solutions.get_target_target_predicate(),
-            #                solutions.get_target_modes())
+                save_mappings(os.path.join(output_path, source_domain_path.name), results)
+
+                create_folder(os.path.join(output_path, "best", source_domain_path.name))
+                create_folder(os.path.join(output_path, "worst", source_domain_path.name))
+
+                apply_mappings(source_path,
+                                os.path.join(output_path, "best", source_domain_path.name),
+                                results[:3],
+                                solutions.get_target_target_predicate(),
+                                solutions.get_target_modes())
+
+                apply_mappings(source_path,
+                                os.path.join(output_path, "worst", source_domain_path.name),
+                                results[-3:],
+                                solutions.get_target_target_predicate(),
+                                solutions.get_target_modes())

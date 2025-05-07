@@ -49,7 +49,6 @@ if __name__ == '__main__':
 
     mappings_workflow()
 
-
     # generating_mappings_for("imdb")
     # generating_mappings_for("nell_finances")
     # generating_mappings_for("nell_sports")
