@@ -20,6 +20,8 @@ class DatabaseWrapper:
 
     def process_source(self, path):
         for source_domain in os.listdir(path):
+            if source_domain != "imdb":
+                continue
             self._data["source"][source_domain] = {}
 
             for mapping_folder in os.listdir(os.path.join(path, source_domain)):

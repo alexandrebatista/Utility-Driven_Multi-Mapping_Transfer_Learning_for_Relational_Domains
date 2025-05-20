@@ -2,6 +2,7 @@ from pathlib import Path
 
 from srlearn.rdn import RDNBoostTransferLearning
 
+from database.database import DatabaseWrapper
 from mapping.main import mappings_workflow
 
 
@@ -59,48 +60,55 @@ if __name__ == '__main__':
     # ------------------------------------------------------------------------------------------------------------------
     # Transforming the datasets in Srlearn databases
 
-    # database = DatabaseWrapper()
-    # database.process_source("./mapped_datasets/to_cora")
-    # database.process_target("./preprocessed/cora")
-    #
-    # train_database = database.generate_train_srldatabase(["fold00", "fold01", "fold02", "fold03"], use_recursion=True)
-    # test_database = database.generate_test_srldatabase(["fold04"], use_recursion=False)
-    #
-    # # ------------------------------------------------------------------------------------------------------------------
-    # # Training the models
-    #
-    # settings = {
-    #             "randomSeed": 11,
-    #             "numberOfClauses": 8,
-    #             "numberOfCycles": 100,
-    #             "maxTreeDepth": 3,
-    #             "nEstimators": 10,
-    #             "nodeSize": 2,
-    #             "neg_pos_ratio": 2,
-    #             "max_failed_neg_sampling_retries": 50,
-    #             "ignoreSTDOUT": True,
-    #             "useRecursion": False,
-    #             "runOriginalRDNBoost": True
-    #         }
-    #
-    # db = database.generate_tl_database(["fold00", "fold01", "fold02", "fold03"], use_recursion=True)
-    # utility_alpha = 1
-    # model = RDNBoostTransferLearning(
-    #     n_estimators=settings["nEstimators"],
-    #     node_size=settings["nodeSize"],
-    #     max_tree_depth=settings["maxTreeDepth"],
-    #     neg_pos_ratio=settings["neg_pos_ratio"],
-    #     number_of_clauses=settings["numberOfClauses"],
-    #     number_of_cycles=settings["numberOfCycles"],
-    #     source_utility_alpha=utility_alpha,
-    #     target_utility_alpha=utility_alpha,
-    #     path="./"
-    # )
-    #
-    # ignore_stdout = True
-    #
-    # # logger.info(f"Training the model on the training set...")
-    # model.fit(db, ignoreSTDOUT=ignore_stdout)
-    #
-    # pass
-    #
+    source_domain = ""
+    target_domain = "twitter"
+
+    train_folds = ["fold00"]
+    test_folds = ["fold01"]
+
+    database = DatabaseWrapper()
+    database.process_source(f"./mapped_datasets/to_{target_domain}/best")
+    database.process_target(f"./preprocessed/{target_domain}")
+
+    train_database = database.generate_train_srldatabase(train_folds, use_recursion=True)
+    test_database = database.generate_test_srldatabase(test_folds, use_recursion=False)
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Training the models
+
+    settings = {
+                "randomSeed": 11,
+                "numberOfClauses": 8,
+                "numberOfCycles": 100,
+                "maxTreeDepth": 3,
+                "nEstimators": 10,
+                "nodeSize": 2,
+                "neg_pos_ratio": 2,
+                "max_failed_neg_sampling_retries": 50,
+                "ignoreSTDOUT": True,
+                "useRecursion": True,
+                "runOriginalRDNBoost": False
+            }
+
+    db = database.generate_tl_database(train_folds, use_recursion=True)
+    utility_alpha = 1
+    model = RDNBoostTransferLearning(
+        n_estimators=settings["nEstimators"],
+        node_size=settings["nodeSize"],
+        max_tree_depth=settings["maxTreeDepth"],
+        neg_pos_ratio=settings["neg_pos_ratio"],
+        number_of_clauses=settings["numberOfClauses"],
+        number_of_cycles=settings["numberOfCycles"],
+        source_utility_alpha=utility_alpha,
+        target_utility_alpha=utility_alpha,
+        path="./"
+    )
+
+    ignore_stdout = True
+
+    # logger.info(f"Training the model on the training set...")
+    model.fit(db, ignoreSTDOUT=ignore_stdout)
+
+    model.predict(test_database, threshold=0.5)
+
+    #model._prediction_metrics
