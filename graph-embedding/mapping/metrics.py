@@ -4,6 +4,40 @@ from scipy.special import rel_entr
 from sklearn.metrics.pairwise import cosine_similarity
 
 
+def smooth_distribution(frequencies, lambda_=0.9):
+    """
+    Computes a smoothed probability distribution using a convex combination
+    of the empirical distribution and the uniform distribution.
+
+    Args:
+        frequencies (dict): A dictionary where keys are node names and values are counts.
+        lambda_ (float): Weight for the empirical distribution. (1 - lambda_) is used for the uniform.
+
+    Returns:
+        dict: A dictionary mapping each node to its smoothed probability.
+    """
+    total_count = sum(frequencies.values())
+    num_nodes = len(frequencies)
+
+    # Empirical distribution (normalize frequencies)
+    empirical = {
+        node: (count / total_count if total_count > 0 else 0.0)
+        for node, count in frequencies.items()
+    }
+
+    # Uniform distribution (equal probability for all nodes)
+    uniform = {node: 1 / num_nodes for node in frequencies}
+
+    # Convex combination (smoothed distribution)
+    smoothed = {
+        node: lambda_ * empirical[node] + (1 - lambda_) * uniform[node]
+        for node in frequencies
+    }
+
+    return smoothed
+
+
+
 def extract_graph_metrics(domain_data, domain_modes, bin_edges=None):
     if bin_edges is None:
         bin_edges = [0, 1, 2, 4, 8, 16, 32, 64, 128, np.inf]
@@ -74,20 +108,11 @@ def extract_graph_metrics(domain_data, domain_modes, bin_edges=None):
             for i in range(len(hist))
         )
 
-    nodes_prior = int(total_nodes * 0.1)
-    edges_prior = int(total_edges * 0.1)
-
     metrics = {
         "total_nodes": total_nodes,
         "total_edges": total_edges,
-        "node_type_distribution": {
-            t: (len(nodes) + nodes_prior) / (total_nodes + nodes_prior)
-            for t, nodes in nodes_by_type.items()
-        },
-        "edge_type_distribution": {
-            t: (c + edges_prior) / (total_edges + edges_prior)
-            for t, c in edge_type_counts.items()
-        },
+        "node_type_distribution": smooth_distribution({key: len(value) for key, value in nodes_by_type.items()}),
+        "edge_type_distribution": smooth_distribution(edge_type_counts),
         # "in_degree_stats": {
         #     t: degree_stats(v["in"])
         #     for t, v in degs_by_type.items()
