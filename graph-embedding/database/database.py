@@ -18,9 +18,9 @@ class DatabaseWrapper:
             }
         }
 
-    def process_source(self, path):
+    def process_source(self, path: str, source_domains: list = None):
         for source_domain in os.listdir(path):
-            if source_domain != "imdb":
+            if source_domain is not None and source_domain not in source_domains:
                 continue
             self._data["source"][source_domain] = {}
 
@@ -33,6 +33,7 @@ class DatabaseWrapper:
                         with open(os.path.join(path, source_domain, mapping_folder, file), "r", encoding="utf-8") as f:
                             lines = f.readlines()
                             self._data["source"][source_domain][mapping_folder][file].extend([line.strip() for line in lines])
+                    break
 
                 # is file (mapping definition)
 
