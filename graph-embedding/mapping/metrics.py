@@ -4,7 +4,33 @@ from scipy.special import rel_entr
 from sklearn.metrics.pairwise import cosine_similarity
 
 
-def smooth_distribution(frequencies, lambda_=0.9):
+def james_stein_lambda(theta_ml, targets, n):
+    """
+    Computes the James-Stein shrinkage factor lambda*.
+
+    Args:
+        theta_ml (np.ndarray): MLE estimates of shape (p,)
+        targets (np.ndarray): Target values t_k of shape (p,)
+        n (int): Sample size
+
+    Returns:
+        float: Shrinkage factor lambda*
+    """
+    theta_ml = np.asarray(theta_ml)
+    targets = np.asarray(targets)
+
+    numerator = 1 - np.sum(theta_ml ** 2)
+    denominator = (n - 1) * np.sum((targets - theta_ml) ** 2)
+
+    if denominator == 0:
+        return 0.0  # Avoid division by zero
+
+    lambda_star = numerator / denominator
+    return lambda_star
+
+
+
+def smooth_distribution(frequencies):
     """
     Computes a smoothed probability distribution using a convex combination
     of the empirical distribution and the uniform distribution.
@@ -28,6 +54,8 @@ def smooth_distribution(frequencies, lambda_=0.9):
     # Uniform distribution (equal probability for all nodes)
     uniform = {node: 1 / num_nodes for node in frequencies}
 
+    lambda_ = james_stein_lambda(np.array(list(empirical.values())), np.array(list(uniform.values())), total_count)
+
     # Convex combination (smoothed distribution)
     smoothed = {
         node: lambda_ * empirical[node] + (1 - lambda_) * uniform[node]
@@ -35,7 +63,6 @@ def smooth_distribution(frequencies, lambda_=0.9):
     }
 
     return smoothed
-
 
 
 def extract_graph_metrics(domain_data, domain_modes, bin_edges=None):
