@@ -18,25 +18,20 @@ class DatabaseWrapper:
             }
         }
 
-    def process_source(self, path: str, source_domains: list = None):
-        for source_domain in os.listdir(path):
-            if source_domain is not None and source_domain not in source_domains:
-                continue
+    def process_source(self, source_domains: list):
+        for source_domain_obj in source_domains:
+            source_domain = source_domain_obj["source_domain"]
+            mappings = source_domain_obj["mappings"]
             self._data["source"][source_domain] = {}
 
-            for mapping_folder in os.listdir(os.path.join(path, source_domain)):
-                # is data
-                if os.path.isdir(os.path.join(path, source_domain, mapping_folder)):
-                    self._data["source"][source_domain][mapping_folder] = {"facts.pl": [], "pos.pl": [], "neg.pl": []}
+            for mapping_id, mapping_path in mappings.items():
+                if os.path.isdir(mapping_path):
+                    self._data["source"][source_domain][mapping_id] = {"facts.pl": [], "pos.pl": [], "neg.pl": []}
 
-                    for file in os.listdir(os.path.join(path, source_domain, mapping_folder)):
-                        with open(os.path.join(path, source_domain, mapping_folder, file), "r", encoding="utf-8") as f:
+                    for file in os.listdir(mapping_path):
+                        with open(os.path.join(mapping_path, file), "r", encoding="utf-8") as f:
                             lines = f.readlines()
-                            self._data["source"][source_domain][mapping_folder][file].extend([line.strip() for line in lines])
-                    break
-
-                # is file (mapping definition)
-
+                            self._data["source"][source_domain][mapping_id][file].extend([line.strip() for line in lines])
 
     def process_target(self, target_domain_path):
         for fold in os.listdir(target_domain_path):

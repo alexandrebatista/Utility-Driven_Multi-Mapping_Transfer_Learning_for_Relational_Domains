@@ -6,7 +6,6 @@ from database.database import DatabaseWrapper
 
 def models_workflow(target_domain: str, train_folds: list = None, source_domains: list = None, quality: str = "best"):
     target_domain_path = f"./preprocessed/{target_domain}"
-    source_path = f"./mapped_datasets/to_{target_domain}/{quality}"
 
     if train_folds is None:
         train_folds = ["fold00"]
@@ -22,7 +21,7 @@ def models_workflow(target_domain: str, train_folds: list = None, source_domains
     # Transforming the datasets in Srlearn databases
 
     database = DatabaseWrapper()
-    database.process_source(source_path, source_domains)
+    database.process_source(source_domains)
     database.process_target(target_domain_path)
 
     train_database = database.generate_tl_database(train_folds, use_recursion=True)

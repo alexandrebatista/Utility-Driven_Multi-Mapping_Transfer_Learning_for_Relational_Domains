@@ -1,7 +1,6 @@
 import numpy as np
 from collections import defaultdict, OrderedDict
 from scipy.special import rel_entr
-from sklearn.metrics.pairwise import cosine_similarity
 
 
 def james_stein_lambda(theta_ml, targets, n):
@@ -27,7 +26,6 @@ def james_stein_lambda(theta_ml, targets, n):
 
     lambda_star = numerator / denominator
     return lambda_star
-
 
 
 def smooth_distribution(frequencies):
@@ -196,18 +194,6 @@ def metrics_to_vector(metrics, node_types, edge_types, bin_labels=None):
 
     return np.array(vec, dtype=np.float32)
 
-
-def cosine_sim(v1, v2):
-    v1 = np.array(v1).reshape(1, -1)
-    v2 = np.array(v2).reshape(1, -1)
-    return cosine_similarity(v1, v2)[0][0]
-
-
-# def KL(target, candidate, eps=1e-10):
-#     a = np.asarray(target, dtype=np.float32) + eps
-#     b = np.asarray(candidate, dtype=np.float32) + eps
-#     return np.sum(a * np.log(a / b))
-
 def KL(target, candidate):
     return sum(rel_entr(target, candidate))
 
@@ -244,13 +230,3 @@ def compare_graphs(target_metrics, candidate_metrics):
     }
 
     return kl_divergences
-
-
-def extract_vector_metrics_from_domain_data(domain_data, domain_modes):
-    metrics = extract_graph_metrics(domain_data, domain_modes)
-    node_types = set([x for xs in list(domain_modes.values()) for x in xs])
-    predicates = list(domain_modes.keys())
-    vec = metrics_to_vector(metrics,
-                            node_types=node_types,
-                            edge_types=predicates)
-    return vec
