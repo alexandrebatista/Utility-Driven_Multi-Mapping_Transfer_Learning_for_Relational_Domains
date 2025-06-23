@@ -377,7 +377,7 @@ def get_required_predicate(filepath):
     return predicate
 
 
-def generate_mappings(source_dir, target_dir):
+def generate_mappings(source_domain_name, source_dir, target_domain_name, target_dir):
     # Caminhos para os arquivos modes.pl da origem e do destino
     source_modes_filepath = os.path.join(source_dir, 'modes.pl')
     target_modes_filepath = os.path.join(target_dir, 'modes.pl')
@@ -392,6 +392,10 @@ def generate_mappings(source_dir, target_dir):
 
     coherent_mappings = generate_all_coherent_mappings(source_modes, target_modes)
 
+    for mapping in coherent_mappings:
+        mapping["source"] = source_domain_name
+        mapping["target"] = target_domain_name
+
     mappings.set_coherent_mappings(coherent_mappings)
 
     target_pos_filepath = os.path.join(target_dir, 'pos.pl')
@@ -404,5 +408,5 @@ def generate_mappings(source_dir, target_dir):
 
     filter_robust_solutions(mappings)
 
-    return mappings
+    return mappings.get_robust_mappings()
 
