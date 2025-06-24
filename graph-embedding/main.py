@@ -1,9 +1,8 @@
 import json
 
-from sympy.multipledispatch.dispatcher import source
-
 from mapping.main import mappings_workflow
 from models.main import models_workflow
+from models.selector_models_workflow import selector_models_workflow
 
 
 def process_mappings(target_domain: str, source_domains: list, quality: str):
@@ -76,16 +75,22 @@ if __name__ == '__main__':
 
     os.nice(10)
 
+    data_path = "/home/alexandre/mestrado/graph-embedding/preprocessed"
+    mappings_path = "/home/alexandre/mestrado/graph-embedding/mappings/"
+    selector_models_path = "/home/alexandre/mestrado/graph-embedding/selector_models/"
+
     # ------------------------------------------------------------------------------------------------------------------
     # Generating Mappings and saving files
 
-    # mappings_workflow()
+    #mappings_workflow()
+
+    selector_models_workflow(data_path, mappings_path, selector_models_path)
 
     # ------------------------------------------------------------------------------------------------------------------
     # Transforming the datasets in Srlearn databases
 
-    process_mapping(target_domain="cora", source_domain="imdb", quality="best")
-    process_mapping(target_domain="cora", source_domain="imdb", quality="worst")
+    # process_mapping(target_domain="cora", source_domain="imdb", quality="best")
+    # process_mapping(target_domain="cora", source_domain="imdb", quality="worst")
 
     # models_workflow(
     #     target_domain="cora",

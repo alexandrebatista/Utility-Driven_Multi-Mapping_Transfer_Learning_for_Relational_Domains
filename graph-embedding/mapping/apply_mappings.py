@@ -71,22 +71,21 @@ def generate_neg(facts, pos, target_modes):
 
     return list(neg_set)
 
-def apply_mapping(source_path, output_path, mapping, target_predicate, target_modes):
+def read_source_domain_and_apply_mapping(source_path, mapping, target_domain_metadata):
     """
     Processa o dataset aplicando os mapeamentos nos arquivos.
 
     - Se um predicado de facts.pl for mapeado para um predicado-alvo, ele vai para pos.pl
     - Se um predicado de pos.pl do domínio de origem **não for mapeado para um predicado-alvo**, ele vai para facts.pl
     """
-    if not os.path.exists(output_path):
-        os.makedirs(output_path)
+
+    target_predicate = target_domain_metadata["target_predicate"]
+    target_modes = target_domain_metadata["modes"]
 
     # Criar buffers para armazenar os conteúdos
     facts_content = []
     pos_content = []
     neg_content = []
-
-    predicate_type1_arg, predicate_type2_arg = target_modes[target_predicate]
 
     # Percorrer os folds
     for fold in sorted(os.listdir(source_path)):
@@ -122,13 +121,15 @@ def apply_mapping(source_path, output_path, mapping, target_predicate, target_mo
             pos_content += pos
             neg_content += neg
 
-            # Salvar arquivos
-        with open(os.path.join(output_path, "facts.pl"), "w") as f:
-            f.write("\n".join(facts_content) + "\n")
-        with open(os.path.join(output_path, "pos.pl"), "w") as f:
-            f.write("\n".join(pos_content) + "\n")
-        with open(os.path.join(output_path, "neg.pl"), "w") as f:
-            f.write("\n".join(neg_content) + "\n")
+        return {"facts": facts_content, "pos": pos_content, "neg": neg_content}
+
+        # # Salvar arquivos
+        # with open(os.path.join(output_path, "facts.pl"), "w") as f:
+        #     f.write("\n".join(facts_content) + "\n")
+        # with open(os.path.join(output_path, "pos.pl"), "w") as f:
+        #     f.write("\n".join(pos_content) + "\n")
+        # with open(os.path.join(output_path, "neg.pl"), "w") as f:
+        #     f.write("\n".join(neg_content) + "\n")
 
 def save_mapping(output_path, facts, pos, neg):
     with open(os.path.join(output_path, "facts.pl"), "w") as f:
@@ -184,3 +185,6 @@ def read_domain(domain_path, folds = None):
                     domain_data[predicate].add(tuple(args))
 
     return domain_data
+
+
+

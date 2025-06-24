@@ -70,8 +70,10 @@ class SelectorModel:
         self._extract_train_metrics()
 
     def test(self, data):
+        database = graph_data_to_database(data, self._target_domain_metadata)
+
         self._test_metrics = {}
-        self._model.predict(data, threshold=0.5)
+        self._model.predict(database, threshold=0.5)
         self._extract_test_metrics()
 
     def _extract_train_metrics(self):
@@ -80,6 +82,9 @@ class SelectorModel:
 
     def _extract_test_metrics(self):
         self._test_metrics = extract_metrics_from_log(self._test_output_path)
+
+    def get_train_metrics(self):
+        return self._train_metrics
 
     def get_test_metrics(self):
         return self._test_metrics
@@ -90,4 +95,3 @@ class SelectorModel:
             "predicates": list(self._predicates),
             "train_metrics": self._train_metrics
         }
-

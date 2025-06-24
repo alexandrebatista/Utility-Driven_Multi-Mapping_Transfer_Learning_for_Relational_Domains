@@ -6,11 +6,11 @@ from tqdm import tqdm
 
 from mapping.apply_mappings import read_domain
 from mapping.mapping import generate_mappings, parse_modes_file
-from mapping.metrics import compare_graphs, extract_graph_metrics
+from mapping.metrics import extract_graph_metrics
 
 from joblib import Parallel, delayed
 
-from models.selector_model import SelectorModel
+from mapping.utils import create_folder
 
 # Variáveis globais
 _source_domain_data = None
@@ -65,13 +65,6 @@ def save_mappings(path, mappings):
     with open(os.path.join(path, "mappings.json"), 'w') as f:
         json.dump(mappings, f)
 
-
-def create_folder(path):
-    path = Path(path)
-    if not path.exists():
-        path.mkdir(parents=True, exist_ok=True)
-
-
 def generate_source_domain_mapped_data(
         mapping,
         source_domain_data,
@@ -87,14 +80,13 @@ def generate_source_domain_mapped_data(
     return mapped_source_domain_data
 
 
-def mappings_workflow(train_folds="fold00"):
+def mappings_workflow(train_folds="fold00", output_path="/home/alexandre/mestrado/graph-embedding/mappings/"):
     path = Path(BASE_DIR)
     for target_domain_path in path.iterdir():
         if target_domain_path.name == "uwcse":
             continue
 
         target_directory = f"{BASE_DIR}/{target_domain_path.name}/fold00"
-        output_path = f"/home/alexandre/mestrado/graph-embedding/mapped_datasets/to_{target_domain_path.name}"
         create_folder(output_path)
 
         print(f"to {target_domain_path.name}")
@@ -103,28 +95,24 @@ def mappings_workflow(train_folds="fold00"):
         mappings_by_target = {}
 
         for source_domain_path in path.iterdir():
-            if source_domain_path.name == target_domain_path.name or not source_domain_path.is_dir():
-                continue
+            if source_domain_path.name != target_domain_path.name and source_domain_path.is_dir():
+                source_path = os.path.join(source_domain_path)
+                source_directory = f"{source_path}/fold00"
 
-            source_path = os.path.join(source_domain_path)
-            source_directory = f"{source_path}/fold00"
+                mappings_path = Path(os.path.join(output_path, f"{target_domain_path.name}.json"))
 
-            mappings_path = Path(os.path.join(output_path, "mappings.json"))
+                if not mappings_path.exists():
+                    mappings = generate_mappings(source_domain_name=source_domain_path.name,
+                                                 source_dir=source_directory,
+                                                 target_domain_name=target_domain_path.name,
+                                                 target_dir=target_directory)
 
-            if mappings_path.exists():
-                pass
-            else:
-                mappings = generate_mappings(source_domain_name=source_domain_path.name,
-                                             source_dir=source_directory,
-                                             target_domain_name=target_domain_path.name,
-                                             target_dir=target_directory)
+                    print(f"\t {source_domain_path.name} : {len(mappings)}")
 
-                print(f"\t {source_domain_path.name} : {len(mappings)}")
+                    for mapping in mappings:
+                        mappings_by_target[mapping_id] = mapping
+                        mapping_id += 1
 
-                #processed_mappings = process_all_mappings(mappings, source_domain_path, target_domain_path)
-
-                for mapping in mappings:
-                    mappings_by_target[mapping_id] = mapping
-                    mapping_id += 1
-
-        save_mappings(os.path.join(output_path), mappings_by_target)
+        if mappings_by_target:
+            with open(os.path.join(output_path, f"{target_domain_path.name}.json"), 'w') as file:
+                json.dump(mappings_by_target, file)
