@@ -1,34 +1,28 @@
-import hashlib
-import json
 import os
 import pickle
-from uuid import uuid5, UUID
 
 from srlearn.rdn import RDNBoost
 
-from database.database import DatabaseWrapper
-
-
-def data_to_database(data):
-    database = DatabaseWrapper()
-    return database.generate_train_srldatabase(data, use_recursion=True)
-
-
-def set_to_uuid(s):
-    namespace = UUID('00000000-0000-0000-0000-000000000000')
-    key_base = json.dumps(sorted(s), sort_keys=True).encode('utf-8')
-    return uuid5(namespace, hashlib.sha1(key_base).hexdigest())
+from database.utils import graph_data_to_database
+from models.utils import set_to_uuid, extract_metrics_from_log, extract_learning_time_from_log
 
 
 class SelectorModel:
 
-    def __init__(self, valid_predicates, source, target):
+    def __init__(self, valid_predicates, source, target, target_domain_metadata):
+        self._name = set_to_uuid(valid_predicates)
         self._predicates = valid_predicates
         self._model = None
-        self._model_name = ""
+
+        self._train_metrics = {}
+        self._test_metrics = {}
+
+        self._target_domain_metadata = target_domain_metadata
 
         self._pkl_path = os.path.join(f"./selector_models/pkl/{target}/")
-        self._rdn_boost_path = os.path.join(f"./selector_models/rdn-boost/{target}/")
+        self._rdn_boost_path = os.path.join(f"./selector_models/rdn-boost/{target}/{self._name}")
+        self._train_output_path = os.path.join(self._rdn_boost_path, "bsrl_data/data0", "train_output.txt")
+        self._test_output_path = os.path.join(self._rdn_boost_path, "bsrl_data/data0", "test_output.txt")
 
         self._settings = {
             "randomSeed": 11,
@@ -44,6 +38,8 @@ class SelectorModel:
             "runOriginalRDNBoost": False
         }
 
+        self._initialize_model()
+
     def _initialize_model(self):
         self._model = RDNBoost(
             n_estimators=self._settings["nEstimators"],
@@ -57,38 +53,41 @@ class SelectorModel:
 
 
     def _filter_predicates(self, data):
-        filtered_data = {
+        all_predicates = list(data["facts"])
 
-        }
+        for predicate in all_predicates:
+            if predicate not in self._predicates and predicate != self._target_domain_metadata["target_predicate"]:
+                del data["facts"][predicate]
 
-        return filtered_data
-
-    def _check_if_model_exists(self):
-        if os.path.exists(path):
-            self._load_model()
-            pass
-
-    def _load_model(self):
-        with open(self._pkl_path, 'rb') as file:
-            self._model = pickle.load(file)
-
-    def _save_model(self):
-        with open(model_path, 'wb') as file:
-            pickle.dump(self._model, file)
+        return data
 
     def train(self, domain_data):
-        filtered_domain_data = self._filter_predicates(domain_data)
-        database = data_to_database(filtered_domain_data)
+        self._filter_predicates(domain_data)
+        database = graph_data_to_database(domain_data, self._target_domain_metadata)
 
         self._model.fit(database, ignoreSTDOUT=self._settings["ignoreSTDOUT"])
+        self._model.predict(database, threshold=0.5)
+        self._extract_train_metrics()
 
     def test(self, data):
+        self._test_metrics = {}
         self._model.predict(data, threshold=0.5)
         self._extract_test_metrics()
 
     def _extract_train_metrics(self):
-        pass
+        self._train_metrics = extract_metrics_from_log(self._test_output_path)
+        self._train_metrics["learning_time_s"] = extract_learning_time_from_log(self._train_output_path)
 
     def _extract_test_metrics(self):
-        pass
+        self._test_metrics = extract_metrics_from_log(self._test_output_path)
+
+    def get_test_metrics(self):
+        return self._test_metrics
+
+    def get_metadata(self):
+        return {
+            "name": self._name,
+            "predicates": list(self._predicates),
+            "train_metrics": self._train_metrics
+        }
 
