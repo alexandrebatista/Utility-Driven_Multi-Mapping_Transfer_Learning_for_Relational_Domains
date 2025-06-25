@@ -1,9 +1,8 @@
 import os
-import pickle
 
 from srlearn.rdn import RDNBoost
 
-from database.utils import graph_data_to_database
+from database.utils import graph_data_to_database, raw_data_to_database
 from models.utils import set_to_uuid, extract_metrics_from_log, extract_learning_time_from_log
 
 
@@ -70,7 +69,7 @@ class SelectorModel:
         self._extract_train_metrics()
 
     def test(self, data):
-        database = graph_data_to_database(data, self._target_domain_metadata)
+        database = raw_data_to_database(data, self._target_domain_metadata)
 
         self._test_metrics = {}
         self._model.predict(database, threshold=0.5)
