@@ -110,6 +110,7 @@ def mappings_workflow(train_folds="fold00", output_path="/home/alexandre/mestrad
                     print(f"\t {source_domain_path.name} : {len(mappings)}")
 
                     for mapping in mappings:
+                        mapping["id"] = mapping_id
                         mappings_by_target[mapping_id] = mapping
                         mapping_id += 1
 

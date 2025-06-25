@@ -17,7 +17,6 @@ def graph_data_to_database(data, domain_metadata):
 
     return database
 
-
 def convert_to_prolog_data(data):
     facts = []
     for pred, tuples in data.items():
@@ -25,6 +24,15 @@ def convert_to_prolog_data(data):
             fact = f"{pred}({', '.join(args)})."
             facts.append(fact)
     return facts
+
+def raw_data_to_database(data, domain_metadata):
+    database = Database()
+    database.facts = data["facts"]
+    database.pos = data["pos"]
+    database.neg = data["neg"]
+    database.modes = domain_metadata["raw_modes"]
+
+    return database
 
 
 def extract_domain_metadata(domain_data_path):
