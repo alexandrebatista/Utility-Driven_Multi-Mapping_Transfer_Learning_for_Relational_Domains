@@ -82,7 +82,7 @@ if __name__ == '__main__':
     # ------------------------------------------------------------------------------------------------------------------
     # Generating Mappings and saving files
 
-    #mappings_workflow()
+    mappings_workflow()
 
     selector_models_workflow(data_path, mappings_path, selector_models_path)
 

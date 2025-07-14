@@ -42,7 +42,7 @@ def selector_models_workflow(
     create_folder(models_metadata_path_dir)
 
     for mappings_file in os.listdir(mappings_path):
-        if mappings_file.endswith('.json'):
+        if mappings_file.endswith('.json') and mappings_file == "cora.json":
             file_path = os.path.join(mappings_path, mappings_file)
             print(f'  Reading file: {mappings_file}')
 
@@ -51,6 +51,8 @@ def selector_models_workflow(
                 mappings = json.load(f)
 
             for mapping_id, mapping in mappings.items():
+                # if mapping["source"] != "imdb":
+                #     continue
 
                 predicates = set(
                     [predicate for predicate in mapping["predicate_mappings"].values() if predicate is not None])
@@ -70,7 +72,7 @@ def selector_models_workflow(
                                                    target=mapping["target"],
                                                    target_domain_metadata=target_domain_metadata)
 
-                    target_domain_data = read_target_domain(target_domain_path)
+                    target_domain_data = read_target_domain(target_domain_path, folds=["fold00"])
                     selector_model.train(target_domain_data)
 
                     # Create model

@@ -136,7 +136,6 @@ def save_mapping(output_path, facts, pos, neg):
     with open(os.path.join(output_path, "neg.pl"), "w") as f:
         f.write("\n".join(neg) + "\n")
 
-
 def apply_mappings(source_path, output_path, mappings, target_predicate, target_modes):
 
     with open(os.path.join(output_path, "mappings.json"), 'w') as f:

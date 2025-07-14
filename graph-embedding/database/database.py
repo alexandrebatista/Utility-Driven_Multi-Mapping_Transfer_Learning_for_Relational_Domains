@@ -26,12 +26,23 @@ class DatabaseWrapper:
 
             for mapping_id, mapping_path in mappings.items():
                 if os.path.isdir(mapping_path):
-                    self._data["source"][source_domain][mapping_id] = {"facts.pl": [], "pos.pl": [], "neg.pl": []}
+                    self._data["source"][source_domain][mapping_id] = {"facts": [], "pos": [], "neg": []}
 
                     for file in os.listdir(mapping_path):
                         with open(os.path.join(mapping_path, file), "r", encoding="utf-8") as f:
                             lines = f.readlines()
-                            self._data["source"][source_domain][mapping_id][file].extend([line.strip() for line in lines])
+                            self._data["source"][source_domain][mapping_id][file[:-3]].extend([line.strip() for line in lines])
+
+    def process_source_from_data(self, multiple_domain_data):
+        for domain, mappings in multiple_domain_data.items():
+            for mapping_id, mapping in mappings.items():
+                for data_type, data in mapping.items():
+                    if domain not in self._data["source"]:
+                        self._data["source"][domain] = {}
+                    if mapping_id not in self._data["source"][domain]:
+                        self._data["source"][domain][mapping_id] = {"facts": [], "pos": [], "neg": []}
+
+                    self._data["source"][domain][mapping_id][data_type].extend(data)
 
     def process_target(self, target_domain_path):
         for fold in os.listdir(target_domain_path):
@@ -44,7 +55,7 @@ class DatabaseWrapper:
 
             with open(os.path.join(target_domain_path, fold, "facts.pl"), "r", encoding="utf-8") as f:
                 lines = f.readlines()
-                self._data["target"][fold]["facts.pl"] = [line.strip() for line in lines]
+                self._data["target"][fold]["facts"] = [line.strip() for line in lines]
 
             with open(os.path.join(target_domain_path, fold, "pos.pl"), "r", encoding="utf-8") as f:
                 lines = f.readlines()
@@ -52,11 +63,11 @@ class DatabaseWrapper:
                 if not self._target_predicate:
                     self._target_predicate = lines[0].split("(")[0]
 
-                self._data["target"][fold]["pos.pl"] = [line.strip() for line in lines]
+                self._data["target"][fold]["pos"] = [line.strip() for line in lines]
 
             with open(os.path.join(target_domain_path, fold, "neg.pl"), "r", encoding="utf-8") as f:
                 lines = f.readlines()
-                self._data["target"][fold]["neg.pl"] = [line.strip() for line in lines]
+                self._data["target"][fold]["neg"] = [line.strip() for line in lines]
 
     def get_source_data(self, data_type):
         data = []
@@ -76,10 +87,10 @@ class DatabaseWrapper:
 
     def generate_train_srldatabase(self, train_folds, use_recursion):
         db = Database()
-        db.pos = self.get_source_data("pos.pl") + self.get_target_data("pos.pl", train_folds)
-        db.neg = self.get_source_data("neg.pl") + self.get_target_data("neg.pl", train_folds)
+        db.pos = self.get_source_data("pos") + self.get_target_data("pos", train_folds)
+        db.neg = self.get_source_data("neg") + self.get_target_data("neg", train_folds)
         db.modes = self._modes
-        db.facts = self.get_source_data("facts.pl") + self.get_target_data("facts.pl", train_folds)
+        db.facts = self.get_source_data("facts") + self.get_target_data("facts", train_folds)
 
         if use_recursion:
             db = db.generateRecursion()
@@ -90,10 +101,10 @@ class DatabaseWrapper:
 
     def generate_test_srldatabase(self, test_folds, use_recursion):
         db = Database()
-        db.pos = self.get_target_data("pos.pl", test_folds)
-        db.neg = self.get_target_data("neg.pl", test_folds)
+        db.pos = self.get_target_data("pos", test_folds)
+        db.neg = self.get_target_data("neg", test_folds)
         db.modes = self._modes
-        db.facts = self.get_target_data("facts.pl", test_folds)
+        db.facts = self.get_target_data("facts", test_folds)
 
         if use_recursion:
             db = db.generateRecursion()
@@ -104,10 +115,10 @@ class DatabaseWrapper:
 
     def generate_tl_database(self, train_folds, use_recursion):
         db = Database()
-        db.pos = self.get_source_data("pos.pl")
-        db.neg = self.get_source_data("neg.pl")
+        db.pos = self.get_source_data("pos")
+        db.neg = self.get_source_data("neg")
         db.modes = self._modes
-        db.facts = self.get_source_data("facts.pl")
+        db.facts = self.get_source_data("facts")
 
         if use_recursion:
             source_database = db.generateRecursion()
@@ -115,10 +126,10 @@ class DatabaseWrapper:
             source_database = db.removeRecursion()
 
         db = Database()
-        db.pos = self.get_target_data("pos.pl", train_folds)
-        db.neg = self.get_target_data("neg.pl", train_folds)
+        db.pos = self.get_target_data("pos", train_folds)
+        db.neg = self.get_target_data("neg", train_folds)
         db.modes = self._modes
-        db.facts = self.get_target_data("facts.pl", train_folds)
+        db.facts = self.get_target_data("facts", train_folds)
 
         if use_recursion:
             target_database = db.generateRecursion()

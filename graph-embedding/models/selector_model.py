@@ -8,7 +8,7 @@ from models.utils import set_to_uuid, extract_metrics_from_log, extract_learning
 
 class SelectorModel:
 
-    def __init__(self, valid_predicates, source, target, target_domain_metadata):
+    def __init__(self, valid_predicates, source, target, target_domain_metadata, settings=None, rdn_boost_path=None):
         self._name = set_to_uuid(valid_predicates)
         self._predicates = valid_predicates
         self._model = None
@@ -19,23 +19,27 @@ class SelectorModel:
         self._target_domain_metadata = target_domain_metadata
 
         self._pkl_path = os.path.join(f"./selector_models/pkl/{target}/")
-        self._rdn_boost_path = os.path.join(f"./selector_models/rdn-boost/{target}/{self._name}")
+        self._rdn_boost_path = os.path.join(
+            f"./selector_models/rdn-boost/{target}/{self._name}") if rdn_boost_path is None else rdn_boost_path
         self._train_output_path = os.path.join(self._rdn_boost_path, "bsrl_data/data0", "train_output.txt")
         self._test_output_path = os.path.join(self._rdn_boost_path, "bsrl_data/data0", "test_output.txt")
 
-        self._settings = {
-            "randomSeed": 11,
-            "numberOfClauses": 8,
-            "numberOfCycles": 100,
-            "maxTreeDepth": 3,
-            "nEstimators": 5,
-            "nodeSize": 2,
-            "neg_pos_ratio": 2,
-            "max_failed_neg_sampling_retries": 50,
-            "ignoreSTDOUT": True,
-            "useRecursion": True,
-            "runOriginalRDNBoost": False
-        }
+        if settings is not None:
+            self._settings = settings
+        else:
+            self._settings = {
+                "randomSeed": 11,
+                "numberOfClauses": 8,
+                "numberOfCycles": 100,
+                "maxTreeDepth": 3,
+                "nEstimators": 5,
+                "nodeSize": 2,
+                "neg_pos_ratio": 2,
+                "max_failed_neg_sampling_retries": 50,
+                "ignoreSTDOUT": True,
+                "useRecursion": True,
+                "runOriginalRDNBoost": False
+            }
 
         self._initialize_model()
 
@@ -49,7 +53,6 @@ class SelectorModel:
             number_of_cycles=self._settings["numberOfCycles"],
             path=self._rdn_boost_path
         )
-
 
     def _filter_predicates(self, data):
         all_predicates = list(data["facts"])
@@ -94,3 +97,58 @@ class SelectorModel:
             "predicates": list(self._predicates),
             "train_metrics": self._train_metrics
         }
+
+    def load_estimates(self):
+        """
+        Loads predicate estimates from a file and returns a list of dictionaries with:
+        - 'predicate': the (possibly negated) predicate name
+        - 'args': list of arguments
+        - 'raw': the raw predicate string
+        - 'score': the float score at the end of the line
+        """
+        import re
+
+        estimates = []
+        pattern = re.compile(r"^(!?\w+)\(([^)]*)\)\s+([0-9]*[.,]?[0-9]+)$")
+
+        filepath = os.path.join(self._rdn_boost_path, "bsrl_data", "data0", "test",
+                                f"results_{self._target_domain_metadata['target_predicate']}.db")
+
+        print(filepath)
+
+        with open(filepath, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("%"):
+                    continue
+
+                match = pattern.match(line)
+                if not match:
+                    print(f"Skipping malformed line: {line}")
+                    continue
+
+                predicate = match.group(1)
+                args_str = match.group(2)
+                args = args_str.split(",")
+                score_str = match.group(3).replace(",", ".")  # in case commas are used as decimal separator
+
+                try:
+                    score = float(score_str)
+                except ValueError:
+                    print(f"Could not convert score to float in line: {line}")
+                    continue
+
+                estimates.append({
+                    "predicate": predicate,
+                    "args": args,
+                    "raw": f"{predicate}({','.join(args)})",
+                    "score": score
+                })
+
+        return estimates
+
+    def get_estimates_by_score(self, threshold=0.5):
+        estimates = self.load_estimates()
+        return [item for item in estimates if item.get('score', 1) <= threshold]
+
+    
