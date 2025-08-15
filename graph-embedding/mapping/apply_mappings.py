@@ -21,7 +21,7 @@ def apply_mapping_to_predicate(line, mapping):
     # Extrair o predicado e os argumentos
     predicate = line.split("(")[0]
     args = line.split("(")[1][:-2].split(",")
-    args = [f"{mapping["id"]}_{arg}" for arg in args]
+    args = [f"{mapping['id']}_{arg}" for arg in args]
 
     # Se o predicate não tiver um mapeamento, remover a linha
     if predicate not in predicate_mappings or predicate_mappings[predicate] is None:

@@ -32,14 +32,18 @@ class SelectorModel:
                 "numberOfClauses": 8,
                 "numberOfCycles": 100,
                 "maxTreeDepth": 3,
-                "nEstimators": 5,
+                "nEstimators": 100,
                 "nodeSize": 2,
                 "neg_pos_ratio": 2,
                 "max_failed_neg_sampling_retries": 50,
                 "ignoreSTDOUT": True,
                 "useRecursion": True,
-                "runOriginalRDNBoost": False
+                "runOriginalRDNBoost": False,
+                "no_boost": False,
+                "debug": False
             }
+
+        print(self._settings)
 
         self._initialize_model()
 
@@ -51,7 +55,9 @@ class SelectorModel:
             neg_pos_ratio=self._settings["neg_pos_ratio"],
             number_of_clauses=self._settings["numberOfClauses"],
             number_of_cycles=self._settings["numberOfCycles"],
-            path=self._rdn_boost_path
+            path=self._rdn_boost_path,
+            no_boost=self._settings["no_boost"],
+            debug=self._settings["debug"]
         )
 
     def _filter_predicates(self, data):
@@ -97,6 +103,9 @@ class SelectorModel:
             "predicates": list(self._predicates),
             "train_metrics": self._train_metrics
         }
+
+    def get_best_samples(self):
+        pass
 
     def load_estimates(self):
         """

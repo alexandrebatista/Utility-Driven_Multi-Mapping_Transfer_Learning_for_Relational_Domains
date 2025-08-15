@@ -1,3 +1,4 @@
+import json
 import os
 
 from srlearn.rdn import RDNBoostTransferLearning
@@ -6,6 +7,11 @@ from database.database import DatabaseWrapper
 
 def models_workflow(target_domain: str, train_folds: list = None, source_domains: list = None, quality: str = "best"):
     target_domain_path = f"./preprocessed/{target_domain}"
+    mappings_path = f"./mappings/{target_domain}.json"
+    mappings_data_path = f"./selected_samples/{target_domain}"
+
+    with open(mappings_path, "r", encoding="utf-8") as f:
+        mappings = json.load(f)
 
     if train_folds is None:
         train_folds = ["fold00"]
@@ -21,7 +27,7 @@ def models_workflow(target_domain: str, train_folds: list = None, source_domains
     # Transforming the datasets in Srlearn databases
 
     database = DatabaseWrapper()
-    database.process_source(source_domains)
+    database.process_mappings(mappings, mappings_data_path)
     database.process_target(target_domain_path)
 
     train_database = database.generate_tl_database(train_folds, use_recursion=True)

@@ -118,3 +118,22 @@ def extract_learning_time_from_log(log_path):
                 return float(match.group(1).replace(",", "."))
 
     return None
+
+
+def get_hard_samples(path):
+    from collections import defaultdict
+
+    samples = defaultdict(set)
+
+    with open(path, 'r') as f:
+        for row in f:
+            row = row.strip().rstrip('.')  # remove espaços e ponto final
+            if '(' in row and ')' in row:
+                predicate, arguments = row.split('(', 1)
+                arguments = arguments.rstrip(')')
+                args = tuple(arg.strip() for arg in arguments.split(','))
+
+                samples[predicate].add(args)
+
+    # Se quiser converter para dict normal:
+    return dict(samples)

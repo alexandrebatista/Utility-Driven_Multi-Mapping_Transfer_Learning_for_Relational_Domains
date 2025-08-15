@@ -51,13 +51,13 @@ def selector_models_workflow(
                 mappings = json.load(f)
 
             for mapping_id, mapping in mappings.items():
-                # if mapping["source"] != "imdb":
-                #     continue
+                if mapping["source"] != "imdb":
+                    continue
 
                 predicates = set(
                     [predicate for predicate in mapping["predicate_mappings"].values() if predicate is not None])
 
-                model_metadata_path_file = os.path.join(models_metadata_path_dir, f"{mapping["target"]}.json")
+                model_metadata_path_file = os.path.join(models_metadata_path_dir, f"{mapping['target']}.json")
 
                 models_metadata = _get_models_metadata(model_metadata_path_file)
                 model_metadata = _search_model_metadata(models_metadata, predicates)

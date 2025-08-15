@@ -44,6 +44,33 @@ class DatabaseWrapper:
 
                     self._data["source"][domain][mapping_id][data_type].extend(data)
 
+    def process_mappings(self, mappings, mappings_data_path):
+        for mapping_id in os.listdir(mappings_data_path):
+            domain = mappings[mapping_id]["source"]
+
+            if domain not in self._data["source"]:
+                self._data["source"][domain] = {}
+            if mapping_id not in self._data["source"][domain]:
+                self._data["source"][domain][mapping_id] = {"facts": [], "pos": [], "neg": []}
+
+            facts_path = os.path.join(mappings_data_path, mapping_id, "facts.pl")
+            pos_path = os.path.join(mappings_data_path, mapping_id, "pos.pl")
+            neg_path = os.path.join(mappings_data_path, mapping_id, "neg.pl")
+
+            with open(facts_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+                self._data["source"][domain][mapping_id]["facts"] = [line.strip() for line in lines]
+
+            if os.path.exists(pos_path):
+                with open(pos_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                    self._data["source"][domain][mapping_id]["pos"] = [line.strip() for line in lines]
+
+            if os.path.exists(neg_path):
+                with open(neg_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                    self._data["source"][domain][mapping_id]["neg"] = [line.strip() for line in lines]
+
     def process_target(self, target_domain_path):
         for fold in os.listdir(target_domain_path):
             if not self._modes:

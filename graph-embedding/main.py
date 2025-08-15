@@ -1,8 +1,8 @@
 import json
 
-from mapping.main import mappings_workflow
+#from mapping.main import mappings_workflow
 from models.main import models_workflow
-from models.selector_models_workflow import selector_models_workflow
+#from models.selector_models_workflow import selector_models_workflow
 
 
 def process_mappings(target_domain: str, source_domains: list, quality: str):
@@ -82,9 +82,9 @@ if __name__ == '__main__':
     # ------------------------------------------------------------------------------------------------------------------
     # Generating Mappings and saving files
 
-    mappings_workflow()
+    #mappings_workflow()
 
-    selector_models_workflow(data_path, mappings_path, selector_models_path)
+    #selector_models_workflow(data_path, mappings_path, selector_models_path)
 
     # ------------------------------------------------------------------------------------------------------------------
     # Transforming the datasets in Srlearn databases
@@ -105,3 +105,7 @@ if __name__ == '__main__':
     #     source_domains=["imdb"],
     #     quality="worst"
     # )
+
+    models_workflow(
+        target_domain="cora",
+    )
