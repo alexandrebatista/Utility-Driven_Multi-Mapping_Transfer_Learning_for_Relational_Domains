@@ -8,8 +8,8 @@ from models.utils import set_to_uuid, extract_metrics_from_log, extract_learning
 
 class SelectorModel:
 
-    def __init__(self, valid_predicates, source, target, target_domain_metadata, settings=None, rdn_boost_path=None):
-        self._name = set_to_uuid(valid_predicates)
+    def __init__(self, valid_predicates, target, target_domain_metadata, settings=None, prefix_path="./", name=None):
+        self._name = set_to_uuid(valid_predicates) if name is None else name
         self._predicates = valid_predicates
         self._model = None
 
@@ -18,9 +18,8 @@ class SelectorModel:
 
         self._target_domain_metadata = target_domain_metadata
 
-        self._pkl_path = os.path.join(f"./selector_models/pkl/{target}/")
-        self._rdn_boost_path = os.path.join(
-            f"./selector_models/rdn-boost/{target}/{self._name}") if rdn_boost_path is None else rdn_boost_path
+        self._pkl_path = os.path.join(prefix_path, f"selector_models/pkl/{target}/")
+        self._rdn_boost_path = os.path.join(prefix_path, f"selector_models/rdn-boost/{target}/{self._name}")
         self._train_output_path = os.path.join(self._rdn_boost_path, "bsrl_data/data0", "train_output.txt")
         self._test_output_path = os.path.join(self._rdn_boost_path, "bsrl_data/data0", "test_output.txt")
 
@@ -43,7 +42,7 @@ class SelectorModel:
                 "debug": False
             }
 
-        print(self._settings)
+        print(settings)
 
         self._initialize_model()
 
@@ -160,4 +159,39 @@ class SelectorModel:
         estimates = self.load_estimates()
         return [item for item in estimates if item.get('score', 1) <= threshold]
 
-    
+    def get_train_accuracies(self, threshold):
+        import numpy as np
+
+        scores = self.load_estimates()
+
+        # Extract labels and scores as NumPy arrays
+        y_true = np.array([0 if s["raw"].startswith("!") else 1 for s in scores])
+        score_arr = np.array([s["score"] for s in scores])
+
+        # Predicted = correct if score > threshold, else inverted
+        y_pred = np.where(score_arr > threshold, y_true, 1 - y_true)
+
+        # Positive accuracy (class 1)
+        pos_mask = y_true == 1
+        pos_acc = np.sum(y_pred[pos_mask] == 1) / np.sum(pos_mask) if np.sum(pos_mask) > 0 else 0
+
+        # Negative accuracy (class 0)
+        neg_mask = y_true == 0
+        neg_acc = np.sum(y_pred[neg_mask] == 0) / np.sum(neg_mask) if np.sum(neg_mask) > 0 else 0
+
+        return float(pos_acc), float(neg_acc)
+
+    def delete(self):
+        import shutil
+
+        if os.path.exists(self._pkl_path) and os.path.isdir(self._pkl_path):
+            shutil.rmtree(self._pkl_path)
+            print(f"Folder '{self._pkl_path}' deleted successfully.")
+        else:
+            print(f"Folder '{self._pkl_path}' does not exist.")
+
+        if os.path.exists(self._rdn_boost_path) and os.path.isdir(self._rdn_boost_path):
+            shutil.rmtree(self._rdn_boost_path)
+            print(f"Folder '{self._rdn_boost_path}' deleted successfully.")
+        else:
+            print(f"Folder '{self._rdn_boost_path}' does not exist.")

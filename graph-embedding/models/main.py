@@ -5,10 +5,10 @@ from srlearn.rdn import RDNBoostTransferLearning
 
 from database.database import DatabaseWrapper
 
-def models_workflow(target_domain: str, train_folds: list = None, source_domains: list = None, quality: str = "best"):
+def models_workflow(target_domain: str, mappings_data_path, train_folds: list = None):
     target_domain_path = f"./preprocessed/{target_domain}"
     mappings_path = f"./mappings/{target_domain}.json"
-    mappings_data_path = f"./selected_samples/{target_domain}"
+    #mappings_data_path = f"./selected_samples/{target_domain}"
 
     with open(mappings_path, "r", encoding="utf-8") as f:
         mappings = json.load(f)
@@ -65,9 +65,6 @@ def models_workflow(target_domain: str, train_folds: list = None, source_domains
 
     ignore_stdout = True
 
-    # logger.info(f"Training the model on the training set...")
     model.fit(train_database, ignoreSTDOUT=ignore_stdout)
 
     model.predict(test_database, threshold=0.5)
-
-    # model._prediction_metrics

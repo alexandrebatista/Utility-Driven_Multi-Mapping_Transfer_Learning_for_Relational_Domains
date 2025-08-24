@@ -2,6 +2,7 @@ import hashlib
 import json
 import pickle
 from uuid import UUID, uuid5
+import re
 
 
 def set_to_uuid(s):
@@ -32,8 +33,6 @@ def load_pickle(filepath):
     """
     with open(filepath, 'rb') as f:
         return pickle.load(f)
-
-import re
 
 def extract_metrics_from_log(log_path):
     """
@@ -119,7 +118,6 @@ def extract_learning_time_from_log(log_path):
 
     return None
 
-
 def get_hard_samples(path):
     from collections import defaultdict
 
@@ -137,3 +135,89 @@ def get_hard_samples(path):
 
     # Se quiser converter para dict normal:
     return dict(samples)
+
+def load_scores(file_path):
+    import pandas as pd
+
+    positive_data = []
+    negative_data = []
+
+    with open(file_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+
+            # Split into text and score
+            parts = line.split()
+            score = float(parts[-1])  # last element is the score
+            text = " ".join(parts[:-1])  # everything else is the instance
+
+            # Check if it's positive or negative
+            if text.startswith("!"):
+                negative_data.append({"instance": text[1:], "score": score})
+            else:
+                positive_data.append({"instance": text, "score": score})
+
+    df_positive = pd.DataFrame(positive_data)
+    df_negative = pd.DataFrame(negative_data)
+
+    return df_positive, df_negative
+
+def create_folder(path):
+    from pathlib import Path
+
+    path = Path(path)
+    if not path.exists():
+        path.mkdir(parents=True, exist_ok=True)
+
+def split_and_save_samples_pl(filepath: str, output_dir: str = "."):
+    import os
+    import pandas as pd
+
+    """
+    Splits samples from a .pl file into easy/hard based on score > 0.5,
+    separates positives and negatives, removes '!' and scores, and
+    saves them into .pl files.
+    """
+    data = []
+    with open(filepath, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            # Split last element as score
+            *sample_parts, score_str = line.split()
+            sample = " ".join(sample_parts)
+            score = float(score_str)
+            is_positive = not sample.startswith("!")
+            if not is_positive:
+                sample = sample[1:]  # remove '!' from negative samples
+            data.append((sample, score, is_positive))
+
+    # Create DataFrame
+    df = pd.DataFrame(data, columns=["sample", "score", "is_positive"])
+
+    # Create directories
+    easy_dir = os.path.join(output_dir, "easy")
+    hard_dir = os.path.join(output_dir, "hard")
+    os.makedirs(easy_dir, exist_ok=True)
+    os.makedirs(hard_dir, exist_ok=True)
+
+    # Split easy/hard
+    df_easy = df[df["score"] > 0.5]
+    df_hard = df[df["score"] < 0.5]
+
+    # Save easy
+    df_easy[df_easy["is_positive"]]["sample"].to_csv(os.path.join(easy_dir, "pos.pl"),
+                                                     index=False, header=False)
+    df_easy[~df_easy["is_positive"]]["sample"].to_csv(os.path.join(easy_dir, "neg.pl"),
+                                                      index=False, header=False)
+
+    # Save hard
+    df_hard[df_hard["is_positive"]]["sample"].to_csv(os.path.join(hard_dir, "pos.pl"),
+                                                     index=False, header=False)
+    df_hard[~df_hard["is_positive"]]["sample"].to_csv(os.path.join(hard_dir, "neg.pl"),
+                                                      index=False, header=False)
+
+    print(f"Files saved in '{easy_dir}' and '{hard_dir}'")
