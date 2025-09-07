@@ -31,7 +31,7 @@ class SelectorModel:
                 "numberOfClauses": 8,
                 "numberOfCycles": 100,
                 "maxTreeDepth": 3,
-                "nEstimators": 100,
+                "nEstimators": 10,
                 "nodeSize": 2,
                 "neg_pos_ratio": 2,
                 "max_failed_neg_sampling_retries": 50,
@@ -39,7 +39,10 @@ class SelectorModel:
                 "useRecursion": True,
                 "runOriginalRDNBoost": False,
                 "no_boost": False,
-                "debug": False
+                "debug": False,
+                "focal_loss_alpha": 0.66,
+                "focal_loss_gamma": 2,
+                "max_tree_depth_in_literals": 3
             }
 
         print(settings)
@@ -56,7 +59,10 @@ class SelectorModel:
             number_of_cycles=self._settings["numberOfCycles"],
             path=self._rdn_boost_path,
             no_boost=self._settings["no_boost"],
-            debug=self._settings["debug"]
+            debug=self._settings["debug"],
+            focal_loss_alpha = self._settings.get("focal_loss_alpha", 0.66),
+            focal_loss_gamma = self._settings.get("focal_loss_gamma", 2),
+            max_tree_depth_in_literals = self._settings["max_tree_depth_in_literals"]
         )
 
     def _filter_predicates(self, data):
@@ -77,7 +83,8 @@ class SelectorModel:
         self._extract_train_metrics()
 
     def test(self, data):
-        database = raw_data_to_database(data, self._target_domain_metadata)
+        #database = raw_data_to_database(data, self._target_domain_metadata)
+        database = graph_data_to_database(data, self._target_domain_metadata)
 
         self._test_metrics = {}
         self._model.predict(database, threshold=0.5)

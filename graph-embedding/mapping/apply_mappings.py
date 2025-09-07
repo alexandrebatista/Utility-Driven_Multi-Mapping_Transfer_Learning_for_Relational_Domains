@@ -118,15 +118,27 @@ def read_source_domain_and_apply_mapping(source_path, mapping, target_domain_met
             pos_content += pos
             neg_content += neg
 
-        return {"facts": facts_content, "pos": pos_content, "neg": neg_content}
+    out = {
+        "facts": {},
+        "pos": {target_domain_metadata["target_predicate"]: set()},
+        "neg": {target_domain_metadata["target_predicate"]: set()}
+    }
 
-        # # Salvar arquivos
-        # with open(os.path.join(output_path, "facts.pl"), "w") as f:
-        #     f.write("\n".join(facts_content) + "\n")
-        # with open(os.path.join(output_path, "pos.pl"), "w") as f:
-        #     f.write("\n".join(pos_content) + "\n")
-        # with open(os.path.join(output_path, "neg.pl"), "w") as f:
-        #     f.write("\n".join(neg_content) + "\n")
+    for item in facts_content:
+        predicate = item.split("(")[0]
+        if predicate not in out["facts"]:
+            out["facts"][predicate] = set()
+        out["facts"][predicate].add(tuple(item.split("(")[1][:-2].split(",")))
+
+    for item in pos_content:
+        predicate = item.split("(")[0]
+        out["pos"][predicate].add(tuple(item.split("(")[1][:-2].split(",")))
+
+    for item in neg_content:
+        predicate = item.split("(")[0]
+        out["neg"][predicate].add(tuple(item.split("(")[1][:-2].split(",")))
+
+    return out
 
 def save_mapping(output_path, facts, pos, neg):
     with open(os.path.join(output_path, "facts.pl"), "w") as f:

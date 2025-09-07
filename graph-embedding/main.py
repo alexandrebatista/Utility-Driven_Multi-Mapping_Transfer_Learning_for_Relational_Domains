@@ -108,4 +108,5 @@ if __name__ == '__main__':
 
     models_workflow(
         target_domain="cora",
+        mappings_data_path="/home/alexandre/mestrado/graph-embedding/experiment_11/selected_samples_best/cora"
     )

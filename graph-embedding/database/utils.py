@@ -7,6 +7,12 @@ from srlearn import Database
 
 from mapping.mapping import parse_modes_file
 
+def create_folder(path):
+    from pathlib import Path
+
+    path = Path(path)
+    if not path.exists():
+        path.mkdir(parents=True, exist_ok=True)
 
 def graph_data_to_database(data, domain_metadata):
     database = Database()
@@ -127,9 +133,12 @@ def read_target_domain(domain_path, folds=None):
                 break
 
     # Initialize facts_data excluding the target predicate
-    facts_data = {pred: set() for pred in modes if pred != target_predicate}
-    pos_data = {}
-    neg_data = {}
+    dataset = {
+        "facts": {pred: set() for pred in modes if pred != target_predicate},
+        "pos": {target_predicate: set()},
+        "neg": {target_predicate: set()}
+    }
+    tmp = []
 
     for fold in folds:
         fold_path = os.path.join(domain_path, fold)
@@ -137,44 +146,34 @@ def read_target_domain(domain_path, folds=None):
             continue
 
         for filename in ["facts.pl", "pos.pl", "neg.pl"]:
+
             file_path = os.path.join(fold_path, filename)
             if not os.path.exists(file_path):
                 continue
 
             with open(file_path, "r") as infile:
                 for line in infile:
+
                     line = line.strip()
                     if not line or line.startswith("%") or "(" not in line:
+                        print(f"The following line couldn't be parsed: {line}")
                         continue
 
                     predicate = line.split("(")[0]
                     args = line.split("(")[1][:-2].split(",")
 
                     if predicate not in modes:
+                        print(f"{predicate} not found in modes")
                         continue
 
-                    if filename == "facts.pl":
-                        # Only add if not the target predicate
-                        if predicate != target_predicate:
-                            facts_data[predicate].add(tuple(args))
-
-                    elif filename == "pos.pl":
-                        if predicate == target_predicate:
-                            if target_predicate not in pos_data:
-                                pos_data[target_predicate] = set()
-                            pos_data[target_predicate].add(tuple(args))
-
-                    elif filename == "neg.pl":
-                        if predicate == target_predicate:
-                            if target_predicate not in neg_data:
-                                neg_data[target_predicate] = set()
-                            neg_data[target_predicate].add(tuple(args))
-
-    return {
-        "facts": facts_data,
-        "pos": pos_data,
-        "neg": neg_data
-    }
+                    data_type = filename[:-3]
+                    if data_type in dataset and predicate in dataset[data_type]:
+                        if filename == "pos.pl":
+                            tmp.append(tuple(args))
+                        dataset[data_type][predicate].add(tuple(args))
+                    else:
+                        print(f"The following line couldn't be processed: {line}")
+    return dataset#, tmp
 
 def load_database(
         path: str = None,
@@ -224,3 +223,33 @@ def load_database(
                     f"No target predicate was given. It will be set as `None` by default. Set `targetPredicate` if it is desired to set any relation as the target relation.")
 
     return database
+
+def load_test_database(domain_path, folds):
+    domain_metadata = extract_domain_metadata(domain_path)
+
+    out = {
+        "facts": {predicate: set() for predicate in domain_metadata if predicate != domain_metadata["target_predicate"]},
+        "pos": {domain_metadata["target_predicate"]: set()},
+        "neg": {domain_metadata["target_predicate"]: set()}
+    }
+
+    for name in os.listdir(domain_path):
+        if os.path.isdir(domain_path) and name in folds:
+            os.path.join(domain_path, name)
+
+            domain_data = read_target_domain(domain_path, folds=["fold00"])
+
+            for data_type in out:
+                for predicate in out[data_type]:
+                    out[data_type][predicate] = out[data_type][predicate].union(domain_data[data_type][predicate])
+
+    return out
+
+def save_data(path, data):
+    create_folder(path)
+
+    for data_type in data:
+        with open(os.path.join(path, f"{data_type}.pl"), "w") as f:
+            for predicate, args_list in data[data_type].items():
+                for args in args_list:
+                    f.write(f"{predicate}({','.join(args)}).\n")
