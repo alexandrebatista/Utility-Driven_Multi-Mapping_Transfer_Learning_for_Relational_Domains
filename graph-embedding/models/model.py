@@ -74,7 +74,7 @@ class RdnBoost:
             debug=False,
             focal_loss_alpha = self._settings.get("focal_loss_alpha", 0.66),
             focal_loss_gamma = self._settings.get("focal_loss_gamma", 2),
-            boxcox_lambda = self._settings.get("boxcox_lambda", 1),
+            boxcox_lambda = self._settings.get("boxcox_lambda", 0),
             max_tree_depth_in_literals = self._settings["max_tree_depth_in_literals"]
         )
 
@@ -287,7 +287,7 @@ class RdnBoost:
 
 
 
-def search_best_model(data, metadata, prefix_path):
+def search_best_model(data, metadata, prefix_path, save=False):
     settings = {
         "nEstimators": 10,
         "max_tree_depth_in_literals": 3
@@ -314,16 +314,10 @@ def search_best_model(data, metadata, prefix_path):
             print(
                 f"{str(number_trees)}:{str(max_tree_depth_in_literals)} - Positive Accuracy: {str(pos_acc)}. Negative Accuracy: {str(neg_acc)}")
 
-            model.save()
-
             if pos_acc > 0.5 and neg_acc > 0.5:
+                if save:
+                    model.save()
                 print("Model found!")
                 print(number_trees)
                 print(max_tree_depth_in_literals)
                 return model
-
-            model.delete()
-
-    print(f"Model not found!")
-
-

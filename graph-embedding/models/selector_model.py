@@ -188,6 +188,16 @@ class SelectorModel:
 
         return float(pos_acc), float(neg_acc)
 
+    def save(self):
+        """
+        Saves itself to a pickle file at the specified filepath.
+
+        """
+        import pickle
+
+        with open(self._pkl_path, 'wb') as file:
+            pickle.dump(self, file)
+
     def delete(self):
         import shutil
 
@@ -202,3 +212,31 @@ class SelectorModel:
             print(f"Folder '{self._rdn_boost_path}' deleted successfully.")
         else:
             print(f"Folder '{self._rdn_boost_path}' does not exist.")
+
+    @staticmethod
+    def get_models_metadata(metadata_path):
+        import json
+
+        if not os.path.exists(metadata_path):
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump({}, f)
+
+            return {}
+
+        with open(metadata_path, 'r', encoding='utf-8') as f:
+            metadata = json.load(f)
+
+        return metadata
+
+    @staticmethod
+    def search_model_metadata(metadata, predicates):
+        model_uuid = set_to_uuid(predicates)
+
+        return metadata.get(model_uuid)
+
+    @staticmethod
+    def update_model_metadata(metadata_path, metadata):
+        import json
+
+        with open(metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=4)
