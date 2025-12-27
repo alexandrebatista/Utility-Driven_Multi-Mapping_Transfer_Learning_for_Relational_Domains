@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import pickle
 from uuid import UUID, uuid5
 import re
@@ -221,3 +222,61 @@ def split_and_save_samples_pl(filepath: str, output_dir: str = "."):
                                                       index=False, header=False)
 
     print(f"Files saved in '{easy_dir}' and '{hard_dir}'")
+
+
+def generate_folds(base_path: str, small_dataset=True):
+    """
+    Generate train/test fold splits from directories following the 'foldXX' pattern.
+
+    Args:
+        base_path (str): Path containing the fold directories.
+        small_dataset (bool): Set if the training dataset has 1 fold or n - 1 folds
+
+    Returns:
+        list[dict]: A list of dictionaries, each containing 'train' and 'test' keys.
+    """
+    # Get all directories that start with "fold"
+    folds = sorted([d for d in os.listdir(base_path) if d.startswith("fold")])
+
+    # Create all train/test splits
+    if small_dataset:
+        splits = [
+            {"train": [fold], "test": [f for f in folds if f != fold]}
+            for fold in folds
+        ]
+    else:
+        splits = [
+            {"test": [fold], "train": [f for f in folds if f != fold]}
+            for fold in folds
+        ]
+
+    return splits
+
+def update_experiment_state(file_path: str, new_results: dict):
+    """
+    Reads the current experiment state from a JSON file, updates it with new results,
+    and writes it back to disk.
+
+    Args:
+        file_path (str): Path to the JSON file.
+        new_results (dict): Dictionary containing new experiment results.
+    """
+    # Load existing data (if the file exists)
+    if os.path.exists(file_path):
+        with open(file_path, "r") as f:
+            try:
+                data = json.load(f)
+            except json.JSONDecodeError:
+                data = []
+    else:
+        data = []
+
+    # Update the state with new results
+    data.append(new_results)
+
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+    # Save updated data back to JSON
+    with open(file_path, "w") as f:
+        json.dump(data, f, indent=4)
