@@ -334,3 +334,32 @@ def default_workflow(base_path: str, target_domain: str, model_settings, model_p
             #update_experiment_state(os.path.join(base_path, "results.json"), {"train": train_metrics, "test": test_metrics})
 
     return output
+
+def placeholder(base_path: str, target_domain: str, rounds: int):
+    import random
+
+    target_domain_path = f"./preprocessed/{target_domain}"
+    mappings_path = os.path.join(base_path, "mappings", f"{target_domain}.json")
+
+    with open(mappings_path, "r", encoding="utf-8") as f:
+        mappings = json.load(f)
+
+    for source_domain in []:
+        mappings_from = [key for key, value in mappings.items() if value["source"] == source_domain]
+
+        selected_mappings_keys = random.sample(mappings_from, rounds) if rounds > len(mappings_from) else mappings_from
+
+        for mapping_key in selected_mappings_keys:
+            curr_mapping = mappings[mapping_key]
+            database = DatabaseWrapper()
+            database.process_mappings(mappings, mapped_data_path)
+            database.process_target(target_domain_path)
+
+
+    # Dado um par source-target
+    # Escolher N mapeamentos do source. Se o total de mapeamentos for menor que N, usar o total. Salvar os mapeamentos escolhidos
+    # Para cada mapeamento, aplicar o mapeamento, juntar os datasets e treinar.
+    # Avaliar o resultado no conjunto de teste
+    # Salvar os resultados
+
+    pass
