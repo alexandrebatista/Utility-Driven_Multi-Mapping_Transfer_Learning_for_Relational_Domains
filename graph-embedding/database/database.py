@@ -2,12 +2,16 @@ import os
 from srlearn import Database
 from srlearn.weight import WeightFactory
 
+from models.utils import generate_folds
+
 
 class DatabaseWrapper:
     def __init__(self):
         self._modes = []
 
         self._target_predicate = None
+
+        self._target_domain_path = None
 
         self._data = {
             "source": {
@@ -32,6 +36,9 @@ class DatabaseWrapper:
                         with open(os.path.join(mapping_path, file), "r", encoding="utf-8") as f:
                             lines = f.readlines()
                             self._data["source"][source_domain][mapping_id][file[:-3]].extend([line.strip() for line in lines])
+
+    def reset_source_data(self):
+        self._data["source"] = {}
 
     def process_source_from_data(self, multiple_domain_data):
         for domain, mappings in multiple_domain_data.items():
@@ -72,6 +79,8 @@ class DatabaseWrapper:
                     self._data["source"][domain][mapping_id]["neg"] = [line.strip() for line in lines]
 
     def process_target(self, target_domain_path):
+        self._target_domain_path = target_domain_path
+
         for fold in os.listdir(target_domain_path):
             if not self._modes:
                 with open(os.path.join(target_domain_path, fold, "modes.pl"), "r", encoding="utf-8") as f:
@@ -111,6 +120,9 @@ class DatabaseWrapper:
                 data += value[data_type]
 
         return data
+
+    def generate_fold_splits(self, small_dataset):
+        return generate_folds(self._target_domain_path, small_dataset)
 
     def generate_train_srldatabase(self, train_folds, use_recursion):
         db = Database()
