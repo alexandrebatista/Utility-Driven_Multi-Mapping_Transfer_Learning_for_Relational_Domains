@@ -8,10 +8,13 @@ from database.database import DatabaseWrapper
 
 from models.utils import extract_metrics_from_log, create_folder, create_folder, set_to_uuid, load_pickle, save_to_pickle
 from .selector_model import SelectorModel
-from .utils import create_folder, set_to_uuid, load_pickle, save_to_pickle, generate_folds, update_experiment_state
-from models.model import search_best_model
+from .utils import create_folder, set_to_uuid, load_pickle, save_to_pickle, generate_folds
+from models.model import generate_knowledge_gap_data
+from models.selector_model import get_transfer_dataset
 from database.utils import extract_domain_metadata, read_target_domain
 from mapping.apply_mappings import read_source_domain_and_apply_mapping
+from mapping.utils import select_mappings
+
 
 def models_workflow(target_domain: str, mappings_data_path, train_folds: list = None):
     target_domain_path = f"./preprocessed/{target_domain}"
@@ -266,6 +269,8 @@ def transfer_learning_workflow(target_domain: str, mapped_data_path, model_setti
 
     return model_settings, train_metrics, test_metrics
 
+# ======================================================================================================================
+
 def default_workflow(base_path: str, target_domain: str, model_settings, model_path, rounds = 3, small_dataset=True, use_recursion=True):
     target_domain_path = f"./preprocessed/{target_domain}"
     fold_splits = generate_folds(target_domain_path, small_dataset)
@@ -336,10 +341,11 @@ def default_workflow(base_path: str, target_domain: str, model_settings, model_p
     return output
 
 def tl_experiment_1(base_path: str, model_path, target_domain: str, rounds: int, use_recursion: bool = True):
-    import random
+    data_path = f"./preprocessed/"
+    target_domain_path = os.path.join(data_path, target_domain)
 
-    target_domain_path = f"./preprocessed/{target_domain}"
-    target_domain_metadata = extract_domain_metadata(target_domain_path)
+    database = DatabaseWrapper()
+    database.process_target(target_domain_path)
 
     mappings_path = os.path.join(base_path, "mappings", f"{target_domain}.json")
 
@@ -347,23 +353,21 @@ def tl_experiment_1(base_path: str, model_path, target_domain: str, rounds: int,
         mappings = json.load(f)
 
     for source_domain in []:
-        source_domain_path = os.path.join(base_path, "preprocessed", f"{source_domain}.json")
-        mappings_from = [key for key, value in mappings.items() if value["source"] == source_domain]
+        if source_domain == target_domain:
+            continue
 
-        selected_mappings_keys = random.sample(mappings_from, rounds) if rounds > len(mappings_from) else mappings_from
+        source_domain_path = os.path.join(data_path, source_domain)
 
-        for mapping_key in selected_mappings_keys:
-            curr_mapping = {source_domain: {mapping_key: mappings[mapping_key]}}
+        selected_mappings = select_mappings(mappings, source_domain, rounds)
 
+        for curr_mapping_key, curr_mapping in selected_mappings.items():
             source_domain_mapped_data = read_source_domain_and_apply_mapping(
                 source_domain_path,
                 curr_mapping,
-                target_domain_metadata
+                database.get_target_domain_metadata()
             )
 
-            database = DatabaseWrapper()
             database.process_source_from_data(source_domain_mapped_data)
-            database.process_target(target_domain_path)
 
             train_metrics, test_metrics = training_workflow(
                 base_path=base_path,
@@ -379,13 +383,13 @@ def tl_experiment_1(base_path: str, model_path, target_domain: str, rounds: int,
                     file
                 )
 
-
             train_metrics, test_metrics = kg_workflow(
                 base_path=base_path,
-                model_path=model_path,
-                database=database,
+                source_domain_mapped_data=source_domain_mapped_data,
+                target_domain=target_domain,
                 model_settings={},
-                use_recursion=use_recursion
+                use_recursion=use_recursion,
+                rounds=rounds
             )
 
             with open(os.path.join(base_path, "kg_approach_results.json"), 'w') as file:
@@ -404,73 +408,59 @@ def tl_experiment_1(base_path: str, model_path, target_domain: str, rounds: int,
 
 # Knowledge Gap Functions
 
-def _search_kg_model(base_path, model_path, dataset, model_settings):
-    model_settings["max_tree_depth_in_literals"] = 3
-
-    while True:
-        metrics = kg_training_workflow(base_path, model_path, dataset, model_settings=model_settings)
-
-        if metrics["auc_roc"] > 0.5:
-            break
-
-        shutil.rmtree(os.path.join(base_path, "bsrl_data"))
-        model_settings["max_tree_depth_in_literals"] += 1
-
-    return
-
-def kg_workflow(base_path, model_path, source_domain_mapped_data, target_domain, use_recursion: bool, rounds: int=3):
+def kg_workflow(base_path, source_domain_mapped_data, target_domain, model_settings, use_recursion: bool, rounds: int=3):
     target_domain_path = f"./preprocessed/{target_domain}"
-    target_domain_metadata = extract_domain_metadata(target_domain_path)
 
-    dataset = DatabaseWrapper()
-    dataset.process_target(target_domain_path)
-    fold_splits = dataset.generate_fold_splits()
+    target_dataset = DatabaseWrapper()
+    target_dataset.process_target(target_domain_path)
+    fold_splits = target_dataset.generate_fold_splits()
+
+    tl_train_metrics_list = []
+    tl_test_metrics_list = []
 
     for fold_configuration in fold_splits:
+
+        train_target_dataset = target_dataset.generate_train_srldatabase(
+            fold_configuration["train"],
+            use_recursion=use_recursion
+        )
+
+        test_target_dataset = target_dataset.generate_test_srldatabase(
+            fold_configuration["test"],
+            use_recursion=use_recursion
+        )
+
         for _ in range(rounds):
-            # Selecionar amostras difíceis
-            # Encontrar um modelo com acurácia acima de 50%
-            # Selecionar amostras do dataset que foram classificadas de forma incorreta
-            # Criar um dataset com essas amostras (dataset difícil)
-
-            dataset.process_source_from_data(source_domain_mapped_data)
-
-            train_dataset = dataset.generate_train_srldatabase(fold_configuration["train"], use_recursion=use_recursion)
-            test_dataset = dataset.generate_test_srldatabase(fold_configuration["test"], use_recursion=use_recursion)
-
-            # Encontra um modelo com auc roc maior que 0.5. As amostras classificadas incorretamente por ele são consideradas as amostras difíceis
-            _search_kg_model(base_path, model_path, train_dataset, model_settings=None)
-
-            # Retorna as amostras classificadas incorretamente
-            hard_samples_dataset = _generate_hard_samples_dataset()
-
-            # Treina modelo para seleção de instâncias
-
-            source_domain_kg_subset = new_instance_selection_workflow()
-            dataset.process_source_from_data(source_domain_kg_subset)
-
-            training_workflow(
-                base_path=base_path,
+            # Generate dataset with misclassified by the model
+            knowledge_gap_data = generate_knowledge_gap_data(
+                dataset = target_dataset,
+                fold_configuration = fold_configuration,
+                use_recursion=use_recursion
             )
 
-            # Selecionar amostras semelhantes às amostras difíceis
-                # Filtrar dataset difícil para possuir os mesmos predicados usados no mapeamento
-                # Treinar modelo no dataset difícil filtrado
-                # Testar modelo no dataset mapeado
-                # Selecionar amostras classificadas corretamente
-                # Criar um dataset com essas amostras
-                # Retornar esse dataset
+            # Get transfer dataset
+            transfer_learning_raw_dataset = get_transfer_dataset(source_domain_mapped_data, knowledge_gap_data)
 
-            dataset.reset_source_data()
+            tl_dataset = DatabaseWrapper()
+            tl_dataset.process_source_from_data(transfer_learning_raw_dataset)
+            tl_dataset.process_target(target_domain_path)
 
-    return {}
+            transfer_learning_train_dataset = tl_dataset.generate_train_srldatabase(
+                fold_configuration["train"],
+                use_recursion=use_recursion
+            )
 
+            tl_train_metrics, tl_test_metrics = kg_training_workflow(
+                base_path=base_path,
+                train_dataset=transfer_learning_train_dataset,
+                test_dataset=test_target_dataset,
+                model_settings=model_settings,
+            )
 
-def _generate_hard_samples_dataset(base_path):
-    pass
+            tl_train_metrics_list.append(tl_train_metrics)
+            tl_test_metrics_list.append(tl_test_metrics)
 
-def _instance_selection_workflow(source_domain_mapped_data, target_domain_data):
-    pass
+    return tl_train_metrics_list, tl_test_metrics_list
 
 def training_workflow(base_path, model_path, database, use_recursion, model_settings=None, rounds=3):
     if model_settings is None:
@@ -486,20 +476,7 @@ def training_workflow(base_path, model_path, database, use_recursion, model_sett
             train_database = database.generate_train_srldatabase(fold_configuration["train"], use_recursion=use_recursion)
             test_database = database.generate_test_srldatabase(fold_configuration["test"], use_recursion=use_recursion)
 
-            model = RDNBoost(
-                n_estimators=model_settings.get("nEstimators", 10),
-                node_size=model_settings.get("nodeSize", 2),
-                max_tree_depth=model_settings.get("maxTreeDepth", 3),
-                neg_pos_ratio=model_settings.get("neg_pos_ratio", 2),
-                number_of_clauses=model_settings.get("numberOfClauses", 8),
-                number_of_cycles=model_settings.get("numberOfCycles", 100),
-                focal_loss_alpha=model_settings.get("focal_loss_alpha", 1),
-                focal_loss_gamma=model_settings.get("focal_loss_gamma", 0),
-                max_tree_depth_in_literals=model_settings.get("max_tree_depth_in_literals", -1),
-                boxcox_lambda=model_settings.get("boxcox_lambda", 0),
-                rdn_version=model_settings.get("rdn_version", "rdn"),
-                path=model_path
-            )
+            model = RDNBoost(**model_settings)
 
             ignore_stdout = True
             model.fit(train_database, ignoreSTDOUT=ignore_stdout)
@@ -517,30 +494,18 @@ def training_workflow(base_path, model_path, database, use_recursion, model_sett
 
     return train_metrics_list, test_metrics_list
 
-def kg_training_workflow(base_path, model_path, dataset, model_settings=None):
+def kg_training_workflow(base_path, train_dataset, test_dataset, model_settings=None):
     if model_settings is None:
         model_settings = {}
 
-    model = RDNBoost(
-        n_estimators=model_settings.get("nEstimators", 10),
-        node_size=model_settings.get("nodeSize", 2),
-        max_tree_depth=model_settings.get("maxTreeDepth", 3),
-        neg_pos_ratio=model_settings.get("neg_pos_ratio", 2),
-        number_of_clauses=model_settings.get("numberOfClauses", 8),
-        number_of_cycles=model_settings.get("numberOfCycles", 100),
-        focal_loss_alpha=model_settings.get("focal_loss_alpha", 1),
-        focal_loss_gamma=model_settings.get("focal_loss_gamma", 0),
-        max_tree_depth_in_literals=model_settings.get("max_tree_depth_in_literals", -1),
-        boxcox_lambda=model_settings.get("boxcox_lambda", 0),
-        rdn_version=model_settings.get("rdn_version", "rdn"),
-        path=model_path
-    )
+    model = RDNBoost(**model_settings)
 
     ignore_stdout = True
-    model.fit(dataset, ignoreSTDOUT=ignore_stdout)
+    model.fit(train_dataset, ignoreSTDOUT=ignore_stdout)
+    model.predict(train_dataset, ignoreSTDOUT=ignore_stdout, threshold=0.5)
+    train_metrics = extract_metrics_from_log(os.path.join(base_path, "bsrl_data/data0", "test_output.txt"))
 
-    model.predict(dataset, ignoreSTDOUT=ignore_stdout, threshold=0.5)
-    train_metrics = extract_metrics_from_log(os.path.join(model_path, "bsrl_data/data0", "test_output.txt"))
+    model.predict(test_dataset, ignoreSTDOUT=ignore_stdout, threshold=0.5)
+    test_metrics = extract_metrics_from_log(os.path.join(base_path, "bsrl_data/data0", "test_output.txt"))
 
-
-    return train_metrics
+    return train_metrics, test_metrics

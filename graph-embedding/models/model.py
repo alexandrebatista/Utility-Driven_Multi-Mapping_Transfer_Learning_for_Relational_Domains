@@ -15,7 +15,7 @@ def load_model(pickle_path):
 
 class RdnBoost:
 
-    def __init__(self, target_domain_metadata, settings=None, prefix_path="./", name=None):
+    def __init__(self, target_domain_metadata, model_settings=None, prefix_path="./", name=None):
         self._model = None
         self._name = name
 
@@ -24,58 +24,31 @@ class RdnBoost:
 
         self._target_domain_metadata = target_domain_metadata
 
-        self._above_path = os.path.join(prefix_path, f"above/fold00")
-        self._below_path = os.path.join(prefix_path, f"below/fold00")
-
-        create_folder(self._above_path)
-        create_folder(self._below_path)
-
         self._pkl_path = os.path.join(prefix_path, f"selector_models/pkl/")
         self._rdn_boost_path = os.path.join(prefix_path, f"selector_models/rdn-boost/{self._name}")
         self._train_output_path = os.path.join(self._rdn_boost_path, "bsrl_data/data0", "train_output.txt")
         self._test_output_path = os.path.join(self._rdn_boost_path, "bsrl_data/data0", "test_output.txt")
 
-        if settings is not None:
-            self._settings = settings
-        else:
-            self._settings = {
-                "randomSeed": 11,
-                "numberOfClauses": 8,
-                "numberOfCycles": 100,
-                "maxTreeDepth": 3,
-                "nEstimators": 10,
-                "nodeSize": 2,
-                "neg_pos_ratio": 2,
-                "max_failed_neg_sampling_retries": 50,
-                "ignoreSTDOUT": True,
-                "useRecursion": True,
-                "runOriginalRDNBoost": False,
-                "no_boost": False,
-                "debug": False,
-                "focal_loss_alpha": 0.66,
-                "focal_loss_gamma": 2,
-                "boxcox_lambda": 1,
-                "max_tree_depth_in_literals": 3
-            }
+        self._model_settings = model_settings if model_settings is not None else {}
 
-        print(settings)
+        print(self._model_settings)
 
         self._initialize_model()
 
     def _initialize_model(self):
         self._model = RDNBoost(
-            n_estimators=self._settings["nEstimators"],
-            node_size=2,
-            max_tree_depth=3,
-            neg_pos_ratio=2,
-            number_of_clauses=8,
-            number_of_cycles=100,
-            path=self._rdn_boost_path,
-            debug=False,
-            focal_loss_alpha = self._settings.get("focal_loss_alpha", 0.66),
-            focal_loss_gamma = self._settings.get("focal_loss_gamma", 2),
-            boxcox_lambda = self._settings.get("boxcox_lambda", 0),
-            max_tree_depth_in_literals = self._settings["max_tree_depth_in_literals"]
+            n_estimators=self._model_settings.get("nEstimators", 10),
+            node_size=self._model_settings.get("nodeSize", 2),
+            max_tree_depth=self._model_settings.get("maxTreeDepth", 3),
+            neg_pos_ratio=self._model_settings.get("neg_pos_ratio", 2),
+            number_of_clauses=self._model_settings.get("numberOfClauses", 8),
+            number_of_cycles=self._model_settings.get("numberOfCycles", 100),
+            focal_loss_alpha=self._model_settings.get("focal_loss_alpha", 1),
+            focal_loss_gamma=self._model_settings.get("focal_loss_gamma", 0),
+            max_tree_depth_in_literals=self._model_settings.get("max_tree_depth_in_literals", -1),
+            boxcox_lambda=self._model_settings.get("boxcox_lambda", 0),
+            rdn_version=self._model_settings.get("rdn_version", "rdn"),
+            path=model_path
         )
 
     def train(self, domain_data):
@@ -131,8 +104,6 @@ class RdnBoost:
         filepath = os.path.join(self._rdn_boost_path, "bsrl_data", "data0", "test",
                                 f"results_{self._target_domain_metadata['target_predicate']}.db")
 
-        print(filepath)
-
         with open(filepath, "r") as f:
             for line in f:
                 line = line.strip()
@@ -158,7 +129,7 @@ class RdnBoost:
                 estimates.append({
                     "predicate": predicate,
                     "args": args,
-                    "raw": f"{predicate}({','.join(args)})",
+                    "raw": f"{predicate}({','.join(args)}).",
                     "score": score
                 })
 
@@ -275,8 +246,8 @@ class RdnBoost:
         pos_above, pos_below = split_by_score_threshold(pos_filtered, score_threshold)
         neg_above, neg_below = split_by_score_threshold(neg_filtered, score_threshold)
 
-        save_datasets(self._above_path, pos_above, neg_above)
-        save_datasets(self._below_path, pos_below, neg_below)
+        #save_datasets(self._above_path, pos_above, neg_above)
+        #save_datasets(self._below_path, pos_below, neg_below)
 
         return {
             "pos_above": pos_above,
@@ -286,24 +257,20 @@ class RdnBoost:
         }
 
 
-
 def search_best_model(data, metadata, prefix_path, save=False):
-    settings = {
-        "nEstimators": 10,
-        "max_tree_depth_in_literals": 3
-    }
+    model_settings = {}
 
     number_trees_list = [10, 20, 50, 100]
     max_tree_depth_in_literals_list = [3, 4, 5, 6, 7, 8, 9, 10]
 
     for number_trees in number_trees_list:
-        settings["nEstimators"] = number_trees
+        model_settings["nEstimators"] = number_trees
 
         for max_tree_depth_in_literals in max_tree_depth_in_literals_list:
-            settings["max_tree_depth_in_literals"] = max_tree_depth_in_literals
+            model_settings["max_tree_depth_in_literals"] = max_tree_depth_in_literals
 
             model = RdnBoost(target_domain_metadata=metadata,
-                             settings=settings,
+                             model_settings=model_settings,
                              prefix_path=prefix_path,
                              name=f"{str(number_trees)}_{str(max_tree_depth_in_literals)}")
 
@@ -321,3 +288,24 @@ def search_best_model(data, metadata, prefix_path, save=False):
                 print(number_trees)
                 print(max_tree_depth_in_literals)
                 return model
+
+def generate_knowledge_gap_data(dataset, fold_configuration, use_recursion, base_path):
+    train_dataset = dataset.generate_train_srldatabase(
+        fold_configuration["train"],
+        use_recursion=use_recursion
+    )
+
+    target_domain_metadata = dataset.get_target_domain_metadata()
+    best_model = search_best_model(train_dataset, target_domain_metadata, base_path)
+    filtered_samples = best_model.process_data(min_fraction=0.01, score_threshold=0.5)
+
+    knowledge_gap_samples = {
+        "pos": [item["raw"] for item in filtered_samples["pos_below"]],
+        "neg": [item["raw"] for item in filtered_samples["neg_below"]],
+    }
+
+    knowledge_gap_data = {
+        **dataset.get_target_facts(), **knowledge_gap_samples
+    }
+
+    return knowledge_gap_data

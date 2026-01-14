@@ -7,6 +7,8 @@ from srlearn import Database
 
 from mapping.mapping import parse_modes_file
 
+from .models import DomainMetadata, PrologData
+
 def create_folder(path):
     from pathlib import Path
 
@@ -14,7 +16,7 @@ def create_folder(path):
     if not path.exists():
         path.mkdir(parents=True, exist_ok=True)
 
-def graph_data_to_database(data, domain_metadata):
+def graph_data_to_database(data, domain_metadata: DomainMetadata):
     database = Database()
     database.facts = convert_to_prolog_data(data["facts"])
     database.pos = convert_to_prolog_data(data["pos"])
@@ -23,7 +25,7 @@ def graph_data_to_database(data, domain_metadata):
 
     return database
 
-def convert_to_prolog_data(data):
+def convert_to_prolog_data(data) -> PrologData:
     facts = []
     for pred, tuples in data.items():
         for args in tuples:
@@ -31,7 +33,7 @@ def convert_to_prolog_data(data):
             facts.append(fact)
     return facts
 
-def raw_data_to_database(data, domain_metadata):
+def raw_data_to_database(data: PrologData, domain_metadata: DomainMetadata):
     database = Database()
     database.facts = data["facts"]
     database.pos = data["pos"]
@@ -41,7 +43,7 @@ def raw_data_to_database(data, domain_metadata):
     return database
 
 
-def extract_domain_metadata(domain_data_path):
+def extract_domain_metadata(domain_data_path: str) -> DomainMetadata:
     """
     Extracts metadata from a domain dataset located at domain_data_path.
     It parses the modes.pl and pos.pl files to collect predicates, types, the target predicate,
@@ -101,7 +103,7 @@ def extract_domain_metadata(domain_data_path):
         "raw_modes": raw_modes
     }
 
-def read_target_domain(domain_path, folds=None):
+def read_target_domain(domain_path:str, folds: str=None):
     """
     Reads domain data from facts.pl, pos.pl, and neg.pl across folds.
 

@@ -2,13 +2,13 @@ import os
 
 from srlearn.rdn import RDNBoost
 
-from database.utils import graph_data_to_database, raw_data_to_database
+from database.utils import graph_data_to_database, raw_data_to_database, convert_to_prolog_data
 from models.utils import set_to_uuid, extract_metrics_from_log, extract_learning_time_from_log
 
 
 class SelectorModel:
 
-    def __init__(self, valid_predicates, target, target_domain_metadata, settings=None, prefix_path="./", name=None):
+    def __init__(self, valid_predicates, target, target_domain_metadata, model_settings=None, prefix_path="./", name=None):
         self._name = set_to_uuid(valid_predicates) if name is None else name
         self._predicates = valid_predicates
         self._model = None
@@ -23,47 +23,27 @@ class SelectorModel:
         self._train_output_path = os.path.join(self._rdn_boost_path, "bsrl_data/data0", "train_output.txt")
         self._test_output_path = os.path.join(self._rdn_boost_path, "bsrl_data/data0", "test_output.txt")
 
-        if settings is not None:
-            self._settings = settings
-        else:
-            self._settings = {
-                "randomSeed": 11,
-                "numberOfClauses": 8,
-                "numberOfCycles": 100,
-                "maxTreeDepth": 3,
-                "nEstimators": 10,
-                "nodeSize": 2,
-                "neg_pos_ratio": 2,
-                "max_failed_neg_sampling_retries": 50,
-                "ignoreSTDOUT": True,
-                "useRecursion": True,
-                "runOriginalRDNBoost": False,
-                "no_boost": False,
-                "debug": False,
-                "focal_loss_alpha": 0.66,
-                "focal_loss_gamma": 2,
-                "max_tree_depth_in_literals": 3
-            }
+        self._model_settings = model_settings if model_settings is not None else {}
 
-        print(settings)
+        print(model_settings)
 
         self._initialize_model()
 
     def _initialize_model(self):
         self._model = RDNBoost(
-            n_estimators=self._settings["nEstimators"],
-            node_size=self._settings["nodeSize"],
-            max_tree_depth=self._settings["maxTreeDepth"],
-            neg_pos_ratio=self._settings["neg_pos_ratio"],
-            number_of_clauses=self._settings["numberOfClauses"],
-            number_of_cycles=self._settings["numberOfCycles"],
-            path=self._rdn_boost_path,
-            no_boost=self._settings["no_boost"],
-            debug=self._settings["debug"],
-            focal_loss_alpha = self._settings.get("focal_loss_alpha", 0.66),
-            focal_loss_gamma = self._settings.get("focal_loss_gamma", 2),
-            max_tree_depth_in_literals = self._settings["max_tree_depth_in_literals"]
-        )
+            n_estimators=self._model_settings.get("nEstimators", 10),
+            node_size=self._model_settings.get("nodeSize", 2),
+            max_tree_depth=self._model_settings.get("maxTreeDepth", 3),
+            neg_pos_ratio=self._model_settings.get("neg_pos_ratio", 2),
+            number_of_clauses=self._model_settings.get("numberOfClauses", 8),
+            number_of_cycles=self._model_settings.get("numberOfCycles", 100),
+            focal_loss_alpha=self._model_settings.get("focal_loss_alpha", 1),
+            focal_loss_gamma=self._model_settings.get("focal_loss_gamma", 0),
+            max_tree_depth_in_literals=self._model_settings.get("max_tree_depth_in_literals", -1),
+            boxcox_lambda=self._model_settings.get("boxcox_lambda", 0),
+            rdn_version=self._model_settings.get("rdn_version", "rdn"),
+            path=self._rdn_boost_path
+    )
 
     def _filter_predicates(self, data):
         all_predicates = list(data["facts"])
@@ -75,7 +55,7 @@ class SelectorModel:
         return data
 
     def train(self, domain_data):
-        self._filter_predicates(domain_data)
+        domain_data = self._filter_predicates(domain_data)
         database = graph_data_to_database(domain_data, self._target_domain_metadata)
 
         self._model.fit(database, ignoreSTDOUT=self._settings["ignoreSTDOUT"])
@@ -110,8 +90,15 @@ class SelectorModel:
             "train_metrics": self._train_metrics
         }
 
-    def get_best_samples(self):
-        pass
+    def get_best_samples(self, threshold=0.5):
+        def split_by_label(data):
+            pos = [d for d in data if not d["raw"].startswith("!")]
+            neg = [d for d in data if d["raw"].startswith("!")]
+            return pos, neg
+
+        estimates = self.load_estimates()
+        best_samples = [item for item in estimates if item.get('score', -1) > threshold]
+        return split_by_label(best_samples)
 
     def load_estimates(self):
         """
@@ -240,3 +227,24 @@ class SelectorModel:
 
         with open(metadata_path, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=4)
+
+def get_transfer_dataset(source_domain_mapped_data, knowledge_gap_data):
+    valid_predicates = list(source_domain_mapped_data["facts"].keys()) + list(source_domain_mapped_data["pos"].keys())
+
+    selector_model = SelectorModel(valid_predicates)
+
+    # Learn the knowledge gap patterns
+    selector_model.train(knowledge_gap_data)
+
+    # Look for source domain samples whose patterns match knowledge gap ones.
+    selector_model.test(source_domain_mapped_data)
+
+    pos_transfer_samples, neg_transfer_samples = selector_model.get_best_samples()
+
+    raw_transfer_dataset = {
+        "facts": convert_to_prolog_data(source_domain_mapped_data["facts"]),
+        "pos": pos_transfer_samples,
+        "neg": neg_transfer_samples
+    }
+
+    return raw_transfer_dataset

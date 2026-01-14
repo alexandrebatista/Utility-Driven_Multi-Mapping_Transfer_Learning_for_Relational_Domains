@@ -4,14 +4,17 @@ from srlearn.weight import WeightFactory
 
 from models.utils import generate_folds
 
+from .models import DomainMetadata
 
 class DatabaseWrapper:
     def __init__(self):
-        self._modes = []
+        self._modes: list = []
 
-        self._target_predicate = None
+        self._target_predicate: str | None = None
 
-        self._target_domain_path = None
+        self._target_domain_path: str | None = None
+
+        self._target_domain_metadata: DomainMetadata | None = None
 
         self._data = {
             "source": {
@@ -51,6 +54,15 @@ class DatabaseWrapper:
 
                     self._data["source"][domain][mapping_id][data_type].extend(data)
 
+    def process_target_from_data(self, target_data, fold):
+        self._data["target"] = {
+            fold: {
+                "facts": target_data["facts"],
+                "pos": target_data["pos"],
+                "neg": target_data["neg"]
+            }
+        }
+
     def process_mappings(self, mappings, mappings_data_path):
         for mapping_id in os.listdir(mappings_data_path):
             domain = mappings[mapping_id]["source"]
@@ -78,7 +90,7 @@ class DatabaseWrapper:
                     lines = f.readlines()
                     self._data["source"][domain][mapping_id]["neg"] = [line.strip() for line in lines]
 
-    def process_target(self, target_domain_path):
+    def process_target(self, target_domain_path: str):
         self._target_domain_path = target_domain_path
 
         for fold in os.listdir(target_domain_path):
@@ -121,10 +133,16 @@ class DatabaseWrapper:
 
         return data
 
+    def get_target_facts(self, fold):
+        return self._data["target"][fold]["facts"]
+
     def generate_fold_splits(self, small_dataset):
         return generate_folds(self._target_domain_path, small_dataset)
 
-    def generate_train_srldatabase(self, train_folds, use_recursion):
+    def get_target_domain_metadata(self):
+        return self._target_domain_metadata
+
+    def generate_train_srldatabase(self, train_folds: list[str], use_recursion: bool):
         db = Database()
         db.pos = self.get_source_data("pos") + self.get_target_data("pos", train_folds)
         db.neg = self.get_source_data("neg") + self.get_target_data("neg", train_folds)
