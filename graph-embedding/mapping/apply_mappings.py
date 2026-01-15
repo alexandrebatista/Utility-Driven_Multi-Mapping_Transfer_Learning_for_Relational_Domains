@@ -2,8 +2,8 @@ import os
 import json
 import random
 
-from mapping.mapping import parse_modes_file
-
+from .mapping import parse_modes_file
+from .models import DataToMap
 
 def apply_mapping_to_predicate(line, mapping):
     """
@@ -68,7 +68,7 @@ def generate_neg(facts, pos, target_modes):
 
     return list(neg_set)
 
-def read_source_domain_and_apply_mapping(source_path, mapping, target_domain_metadata):
+def read_source_domain_and_apply_mapping(source_path, mapping, target_domain_metadata) -> DataToMap:
     """
     Processa o dataset aplicando os mapeamentos nos arquivos.
 

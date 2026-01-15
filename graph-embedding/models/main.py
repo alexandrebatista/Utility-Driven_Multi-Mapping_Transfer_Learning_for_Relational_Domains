@@ -11,7 +11,7 @@ from .selector_model import SelectorModel
 from .utils import create_folder, set_to_uuid, load_pickle, save_to_pickle, generate_folds
 from models.model import generate_knowledge_gap_data
 from models.selector_model import get_transfer_dataset
-from database.utils import extract_domain_metadata, read_target_domain
+from database.utils import extract_domain_metadata, read_target_domain, get_dataset_names, convert_datatomap_to_prologdata
 from mapping.apply_mappings import read_source_domain_and_apply_mapping
 from mapping.utils import select_mappings
 
@@ -344,15 +344,17 @@ def tl_experiment_1(base_path: str, model_path, target_domain: str, rounds: int,
     data_path = f"./preprocessed/"
     target_domain_path = os.path.join(data_path, target_domain)
 
+    domains = get_dataset_names(data_path)
+
     database = DatabaseWrapper()
     database.process_target(target_domain_path)
 
-    mappings_path = os.path.join(base_path, "mappings", f"{target_domain}.json")
+    mappings_path = os.path.join("./mappings", f"{target_domain}.json")
 
     with open(mappings_path, "r", encoding="utf-8") as f:
         mappings = json.load(f)
 
-    for source_domain in []:
+    for source_domain in domains:
         if source_domain == target_domain:
             continue
 
@@ -367,7 +369,9 @@ def tl_experiment_1(base_path: str, model_path, target_domain: str, rounds: int,
                 database.get_target_domain_metadata()
             )
 
-            database.process_source_from_data(source_domain_mapped_data)
+            source_domain_converted_data = convert_datatomap_to_prologdata(source_domain_mapped_data)
+
+            database.process_source_from_data({source_domain: {curr_mapping_key: source_domain_converted_data}})
 
             train_metrics, test_metrics = training_workflow(
                 base_path=base_path,
@@ -435,7 +439,8 @@ def kg_workflow(base_path, source_domain_mapped_data, target_domain, model_setti
             knowledge_gap_data = generate_knowledge_gap_data(
                 dataset = target_dataset,
                 fold_configuration = fold_configuration,
-                use_recursion=use_recursion
+                use_recursion=use_recursion,
+                base_path=base_path
             )
 
             # Get transfer dataset
@@ -462,7 +467,7 @@ def kg_workflow(base_path, source_domain_mapped_data, target_domain, model_setti
 
     return tl_train_metrics_list, tl_test_metrics_list
 
-def training_workflow(base_path, model_path, database, use_recursion, model_settings=None, rounds=3):
+def training_workflow(base_path, model_path, database, use_recursion, model_settings=None, rounds=1):
     if model_settings is None:
         model_settings = {}
 
@@ -476,7 +481,7 @@ def training_workflow(base_path, model_path, database, use_recursion, model_sett
             train_database = database.generate_train_srldatabase(fold_configuration["train"], use_recursion=use_recursion)
             test_database = database.generate_test_srldatabase(fold_configuration["test"], use_recursion=use_recursion)
 
-            model = RDNBoost(**model_settings)
+            model = RDNBoost(**model_settings, path=base_path)
 
             ignore_stdout = True
             model.fit(train_database, ignoreSTDOUT=ignore_stdout)

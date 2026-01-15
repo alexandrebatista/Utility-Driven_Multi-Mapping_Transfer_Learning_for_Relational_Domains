@@ -6,6 +6,7 @@ from typing import Optional
 from srlearn import Database
 
 from mapping.mapping import parse_modes_file
+from mapping.models import DataToMap
 
 from .models import DomainMetadata, PrologData
 
@@ -25,13 +26,21 @@ def graph_data_to_database(data, domain_metadata: DomainMetadata):
 
     return database
 
-def convert_to_prolog_data(data) -> PrologData:
-    facts = []
-    for pred, tuples in data.items():
-        for args in tuples:
-            fact = f"{pred}({', '.join(args)})."
-            facts.append(fact)
-    return facts
+def convert_to_prolog_data(data) -> list[str]:
+    converted_data = []
+    for predicate, tuples_set in data.items():
+        for tuple_args in tuples_set:
+            fact = f"{predicate}({', '.join(tuple_args)})."
+            converted_data.append(fact)
+    return converted_data
+
+def convert_datatomap_to_prologdata(data_to_map: DataToMap) -> PrologData:
+    converted_data = {}
+
+    for data_type in data_to_map:
+        converted_data[data_type] = convert_to_prolog_data(data_to_map[data_type])
+
+    return converted_data
 
 def raw_data_to_database(data: PrologData, domain_metadata: DomainMetadata):
     database = Database()
@@ -255,3 +264,23 @@ def save_data(path, data):
             for predicate, args_list in data[data_type].items():
                 for args in args_list:
                     f.write(f"{predicate}({','.join(args)}).\n")
+
+def get_dataset_names(path):
+    """
+    Lists all subdirectories (folders) within a given directory.
+
+    Args:
+        path (str): The path to the directory to inspect.
+
+    Returns:
+        list: A list of strings, where each string is the name of a subdirectory.
+    """
+    folders = []
+    # Get all entries (files and directories) in the specified path
+    for entry in os.listdir(path):
+        # Construct the full path of the entry
+        full_path = os.path.join(path, entry)
+        # Check if the entry is a directory
+        if os.path.isdir(full_path):
+            folders.append(entry)
+    return folders

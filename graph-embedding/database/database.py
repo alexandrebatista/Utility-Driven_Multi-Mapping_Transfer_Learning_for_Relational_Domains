@@ -6,6 +6,8 @@ from models.utils import generate_folds
 
 from .models import DomainMetadata
 
+from .utils import extract_domain_metadata
+
 class DatabaseWrapper:
     def __init__(self):
         self._modes: list = []
@@ -93,6 +95,8 @@ class DatabaseWrapper:
     def process_target(self, target_domain_path: str):
         self._target_domain_path = target_domain_path
 
+        self._target_domain_metadata = extract_domain_metadata(target_domain_path)
+
         for fold in os.listdir(target_domain_path):
             if not self._modes:
                 with open(os.path.join(target_domain_path, fold, "modes.pl"), "r", encoding="utf-8") as f:
@@ -136,7 +140,7 @@ class DatabaseWrapper:
     def get_target_facts(self, fold):
         return self._data["target"][fold]["facts"]
 
-    def generate_fold_splits(self, small_dataset):
+    def generate_fold_splits(self, small_dataset=True):
         return generate_folds(self._target_domain_path, small_dataset)
 
     def get_target_domain_metadata(self):
