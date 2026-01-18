@@ -373,19 +373,19 @@ def tl_experiment_1(base_path: str, model_path, target_domain: str, rounds: int,
 
             database.process_source_from_data({source_domain: {curr_mapping_key: source_domain_converted_data}})
 
-            train_metrics, test_metrics = training_workflow(
-                base_path=base_path,
-                model_path=model_path,
-                database=database,
-                model_settings={},
-                use_recursion=use_recursion
-            )
-
-            with open(os.path.join(base_path, "default_approach_results.json"), 'w') as file:
-                json.dump(
-                    {"train_results": train_metrics, "test_results": test_metrics},
-                    file
-                )
+            # train_metrics, test_metrics = training_workflow(
+            #     base_path=base_path,
+            #     model_path=model_path,
+            #     database=database,
+            #     model_settings={},
+            #     use_recursion=use_recursion
+            # )
+            #
+            # with open(os.path.join(base_path, f"{source_domain}_{target_domain}_default_approach_results.json"), 'w') as file:
+            #     json.dump(
+            #         {"mapping": curr_mapping, "train_results": train_metrics, "test_results": test_metrics},
+            #         file
+            #     )
 
             train_metrics, test_metrics = kg_workflow(
                 base_path=base_path,
@@ -396,9 +396,9 @@ def tl_experiment_1(base_path: str, model_path, target_domain: str, rounds: int,
                 rounds=rounds
             )
 
-            with open(os.path.join(base_path, "kg_approach_results.json"), 'w') as file:
+            with open(os.path.join(base_path, f"{source_domain}_{target_domain}_kg_approach_results.json"), 'w') as file:
                 json.dump(
-                    {"train_results": train_metrics, "test_results": test_metrics},
+                    {"mapping": curr_mapping, "train_results": train_metrics, "test_results": test_metrics},
                     file
                 )
 
@@ -444,7 +444,13 @@ def kg_workflow(base_path, source_domain_mapped_data, target_domain, model_setti
             )
 
             # Get transfer dataset
-            transfer_learning_raw_dataset = get_transfer_dataset(source_domain_mapped_data, knowledge_gap_data)
+            transfer_learning_raw_dataset = get_transfer_dataset(
+                base_path=base_path,
+                source_domain_mapped_data=source_domain_mapped_data,
+                target_domain_name=target_domain,
+                target_domain_metadata=target_dataset.get_target_domain_metadata(),
+                knowledge_gap_data=knowledge_gap_data
+            )
 
             tl_dataset = DatabaseWrapper()
             tl_dataset.process_source_from_data(transfer_learning_raw_dataset)

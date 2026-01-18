@@ -48,14 +48,14 @@ class RdnBoost:
             max_tree_depth_in_literals=self._model_settings.get("max_tree_depth_in_literals", -1),
             boxcox_lambda=self._model_settings.get("boxcox_lambda", 0),
             rdn_version=self._model_settings.get("rdn_version", "rdn"),
-            path=model_path
+            path=self._rdn_boost_path
         )
 
     def train(self, domain_data):
-        database = graph_data_to_database(domain_data, self._target_domain_metadata)
+        #database = graph_data_to_database(domain_data, self._target_domain_metadata)
 
-        self._model.fit(database, ignoreSTDOUT=True)
-        self._model.predict(database, threshold=0.5)
+        self._model.fit(domain_data, ignoreSTDOUT=True)
+        self._model.predict(domain_data, threshold=0.5)
         self._extract_train_metrics()
 
     def test(self, data):
@@ -196,7 +196,7 @@ class RdnBoost:
         # --- separar positivos e negativos ---
         def split_by_label(data):
             pos = [d for d in data if not d["raw"].startswith("!")]
-            neg = [d for d in data if d["raw"].startswith("!")]
+            neg = [{**d, "raw": d["raw"][1:]} for d in data if d["raw"].startswith("!")]
             return pos, neg
 
         # --- remover scores raros (menos de min_fraction do grupo) ---
@@ -206,8 +206,6 @@ class RdnBoost:
 
             for d in instances:
                 freq[d["score"]] += 1
-
-            print(freq)
 
             threshold = total * min_fract
             filtered = [d for d in instances if freq[d["score"]] >= threshold]
@@ -289,6 +287,8 @@ def search_best_model(data, metadata, prefix_path, save=False):
                 print(max_tree_depth_in_literals)
                 return model
 
+    raise Exception("A good model, to generate the knowledge gap dataset, could not be found.")
+
 def generate_knowledge_gap_data(dataset, fold_configuration, use_recursion, base_path):
     train_dataset = dataset.generate_train_srldatabase(
         fold_configuration["train"],
@@ -298,6 +298,7 @@ def generate_knowledge_gap_data(dataset, fold_configuration, use_recursion, base
     target_domain_metadata = dataset.get_target_domain_metadata()
     best_model = search_best_model(train_dataset, target_domain_metadata, base_path)
     filtered_samples = best_model.process_data(min_fraction=0.01, score_threshold=0.5)
+    best_model.delete()
 
     knowledge_gap_samples = {
         "pos": [item["raw"] for item in filtered_samples["pos_below"]],
@@ -305,7 +306,7 @@ def generate_knowledge_gap_data(dataset, fold_configuration, use_recursion, base
     }
 
     knowledge_gap_data = {
-        **dataset.get_target_facts(), **knowledge_gap_samples
+        **dataset.get_target_facts(fold_configuration["train"]), **knowledge_gap_samples
     }
 
     return knowledge_gap_data

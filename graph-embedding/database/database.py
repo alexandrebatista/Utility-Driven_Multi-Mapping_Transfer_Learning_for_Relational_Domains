@@ -137,8 +137,11 @@ class DatabaseWrapper:
 
         return data
 
-    def get_target_facts(self, fold):
-        return self._data["target"][fold]["facts"]
+    def get_target_facts(self, folds):
+        facts = []
+        for fold in folds:
+            facts.extend(self._data["target"][fold]["facts"])
+        return {"facts": facts}
 
     def generate_fold_splits(self, small_dataset=True):
         return generate_folds(self._target_domain_path, small_dataset)

@@ -3,7 +3,7 @@ import os
 from srlearn.rdn import RDNBoost
 
 from database.utils import graph_data_to_database, raw_data_to_database, convert_to_prolog_data
-from models.utils import set_to_uuid, extract_metrics_from_log, extract_learning_time_from_log
+from .utils import set_to_uuid, extract_metrics_from_log, extract_learning_time_from_log, create_folder
 
 
 class SelectorModel:
@@ -22,6 +22,8 @@ class SelectorModel:
         self._rdn_boost_path = os.path.join(prefix_path, f"selector_models/rdn-boost/{target}/{self._name}")
         self._train_output_path = os.path.join(self._rdn_boost_path, "bsrl_data/data0", "train_output.txt")
         self._test_output_path = os.path.join(self._rdn_boost_path, "bsrl_data/data0", "test_output.txt")
+
+
 
         self._model_settings = model_settings if model_settings is not None else {}
 
@@ -46,25 +48,23 @@ class SelectorModel:
     )
 
     def _filter_predicates(self, data):
-        all_predicates = list(data["facts"])
-
-        for predicate in all_predicates:
-            if predicate not in self._predicates and predicate != self._target_domain_metadata["target_predicate"]:
-                del data["facts"][predicate]
-
+        data["facts"] = [
+            fact for fact in data["facts"]
+            if fact.split('(', 1)[0] in self._predicates and fact.split('(', 1)[0] != self._target_domain_metadata["target_predicate"]
+        ]
         return data
 
     def train(self, domain_data):
         domain_data = self._filter_predicates(domain_data)
-        database = graph_data_to_database(domain_data, self._target_domain_metadata)
+        database = raw_data_to_database(domain_data, self._target_domain_metadata)
 
-        self._model.fit(database, ignoreSTDOUT=self._settings["ignoreSTDOUT"])
+        self._model.fit(database, ignoreSTDOUT=True)
         self._model.predict(database, threshold=0.5)
         self._extract_train_metrics()
 
     def test(self, data):
-        #database = raw_data_to_database(data, self._target_domain_metadata)
-        database = graph_data_to_database(data, self._target_domain_metadata)
+        database = raw_data_to_database(data, self._target_domain_metadata)
+        #database = graph_data_to_database(data, self._target_domain_metadata)
 
         self._test_metrics = {}
         self._model.predict(database, threshold=0.5)
@@ -228,10 +228,10 @@ class SelectorModel:
         with open(metadata_path, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=4)
 
-def get_transfer_dataset(source_domain_mapped_data, knowledge_gap_data):
+def get_transfer_dataset(base_path, source_domain_mapped_data, target_domain_name, target_domain_metadata, knowledge_gap_data):
     valid_predicates = list(source_domain_mapped_data["facts"].keys()) + list(source_domain_mapped_data["pos"].keys())
 
-    selector_model = SelectorModel(valid_predicates)
+    selector_model = SelectorModel(valid_predicates, target=target_domain_name, target_domain_metadata=target_domain_metadata, prefix_path=base_path)
 
     # Learn the knowledge gap patterns
     selector_model.train(knowledge_gap_data)
@@ -246,5 +246,7 @@ def get_transfer_dataset(source_domain_mapped_data, knowledge_gap_data):
         "pos": pos_transfer_samples,
         "neg": neg_transfer_samples
     }
+
+    selector_model.delete()
 
     return raw_transfer_dataset
