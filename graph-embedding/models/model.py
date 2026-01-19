@@ -308,7 +308,6 @@ def search_best_model(dataset, fold_configuration, use_recursion, prefix_path, s
 def generate_knowledge_gap_data(dataset, fold_configuration, use_recursion, base_path):
     best_model = search_best_model(dataset, fold_configuration, use_recursion, base_path)
     filtered_samples = best_model.process_data(min_fraction=0.01, score_threshold=0.5)
-    best_model.delete()
 
     knowledge_gap_samples = {
         "pos": [item["raw"] for item in filtered_samples["pos_below"]],
