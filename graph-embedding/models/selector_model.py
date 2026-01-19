@@ -2,8 +2,8 @@ import os
 
 from srlearn.rdn import RDNBoost
 
-from database.utils import graph_data_to_database, raw_data_to_database, convert_to_prolog_data
-from .utils import set_to_uuid, extract_metrics_from_log, extract_learning_time_from_log, create_folder
+from database.utils import graph_data_to_database, raw_data_to_database, convert_to_prolog_data, convert_datatomap_to_prologdata
+from .utils import set_to_uuid, extract_metrics_from_log, extract_learning_time_from_log
 
 
 class SelectorModel:
@@ -228,7 +228,7 @@ class SelectorModel:
         with open(metadata_path, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=4)
 
-def get_transfer_dataset(base_path, source_domain_mapped_data, target_domain_name, target_domain_metadata, knowledge_gap_data):
+def get_transfer_dataset(base_path: str, source_domain_mapped_data, target_domain_name: str, target_domain_metadata, knowledge_gap_data):
     valid_predicates = list(source_domain_mapped_data["facts"].keys()) + list(source_domain_mapped_data["pos"].keys())
 
     selector_model = SelectorModel(valid_predicates, target=target_domain_name, target_domain_metadata=target_domain_metadata, prefix_path=base_path)
@@ -237,7 +237,8 @@ def get_transfer_dataset(base_path, source_domain_mapped_data, target_domain_nam
     selector_model.train(knowledge_gap_data)
 
     # Look for source domain samples whose patterns match knowledge gap ones.
-    selector_model.test(source_domain_mapped_data)
+    source_domain_converted_data = convert_datatomap_to_prologdata(source_domain_mapped_data)
+    selector_model.test(source_domain_converted_data)
 
     pos_transfer_samples, neg_transfer_samples = selector_model.get_best_samples()
 

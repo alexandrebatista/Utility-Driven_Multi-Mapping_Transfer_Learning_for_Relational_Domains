@@ -14,7 +14,6 @@ target_domains = [{"domain": domain, "use_recursion": domain not in no_recursion
 for target_domain in target_domains:
     tl_experiment_1(
         base_path=base_path,
-        model_path=model_path,
         target_domain_name=target_domain["domain"],
         rounds=3,
         use_recursion=target_domain["use_recursion"]

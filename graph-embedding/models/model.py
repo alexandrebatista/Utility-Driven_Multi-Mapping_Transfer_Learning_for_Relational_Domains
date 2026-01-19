@@ -3,7 +3,7 @@ import os
 from srlearn.rdn import RDNBoost
 
 from database.utils import graph_data_to_database, raw_data_to_database
-from models.utils import set_to_uuid, extract_metrics_from_log, extract_learning_time_from_log, create_folder
+from .utils import extract_metrics_from_log, extract_learning_time_from_log, create_folder
 
 def load_model(pickle_path):
     import pickle

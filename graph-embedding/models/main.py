@@ -340,7 +340,7 @@ def default_workflow(base_path: str, target_domain: str, model_settings, model_p
 
     return output
 
-def tl_experiment_1(base_path: str, model_path, target_domain_name: str, rounds: int, use_recursion: bool = True):
+def tl_experiment_1(base_path: str, target_domain_name: str, rounds: int, use_recursion: bool = True):
     data_path = f"./preprocessed/"
     target_domain_path = os.path.join(data_path, target_domain_name)
 
