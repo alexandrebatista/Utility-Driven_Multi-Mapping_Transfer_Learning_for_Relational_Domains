@@ -16,6 +16,8 @@ class DatabaseWrapper:
 
         self._target_domain_path: str | None = None
 
+        self._target_domain_name: str | None = None
+
         self._target_domain_metadata: DomainMetadata | None = None
 
         self._data = {
@@ -92,8 +94,10 @@ class DatabaseWrapper:
                     lines = f.readlines()
                     self._data["source"][domain][mapping_id]["neg"] = [line.strip() for line in lines]
 
-    def process_target(self, target_domain_path: str):
+    def process_target(self, target_domain_path: str, target_domain_name: str):
         self._target_domain_path = target_domain_path
+
+        self._target_domain_name = target_domain_name
 
         self._target_domain_metadata = extract_domain_metadata(target_domain_path)
 
@@ -148,6 +152,9 @@ class DatabaseWrapper:
 
     def get_target_domain_metadata(self):
         return self._target_domain_metadata
+
+    def get_target_domain_name(self):
+        return self._target_domain_name
 
     def generate_train_srldatabase(self, train_folds: list[str], use_recursion: bool):
         db = Database()

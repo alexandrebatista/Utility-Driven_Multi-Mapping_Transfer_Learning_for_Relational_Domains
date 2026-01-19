@@ -255,48 +255,58 @@ class RdnBoost:
         }
 
 
-def search_best_model(data, metadata, prefix_path, save=False):
-    model_settings = {}
+def search_best_model(dataset, fold_configuration, use_recursion, prefix_path, save=True):
+    from pathlib import Path
+
+    target_domain_name = dataset.get_target_domain_name()
+    path = Path(os.path.join(prefix_path, f"selector_models/pkl/", f"best_model_{target_domain_name}"))
+
+    if path.exists():
+        return load_model(path)
+
+    dataset_metadata = dataset.get_target_domain_metadata()
+
+    train_dataset = dataset.generate_train_srldatabase(
+        fold_configuration["train"],
+        use_recursion=use_recursion
+    )
+
+    model_settings = {"max_tree_depth_in_literals": 100}
 
     number_trees_list = [10, 20, 50, 100]
-    max_tree_depth_in_literals_list = [3, 4, 5, 6, 7, 8, 9, 10]
+    max_tree_depth_list = [3, 4, 5, 6, 7, 8]
 
     for number_trees in number_trees_list:
         model_settings["nEstimators"] = number_trees
 
-        for max_tree_depth_in_literals in max_tree_depth_in_literals_list:
-            model_settings["max_tree_depth_in_literals"] = max_tree_depth_in_literals
+        for max_tree_depth in max_tree_depth_list:
+            model_settings["maxTreeDepth"] = max_tree_depth
 
-            model = RdnBoost(target_domain_metadata=metadata,
+            model = RdnBoost(target_domain_metadata=dataset_metadata,
                              model_settings=model_settings,
                              prefix_path=prefix_path,
-                             name=f"{str(number_trees)}_{str(max_tree_depth_in_literals)}")
+                             name=f"best_model_{target_domain_name}")
 
-            model.train(data)
+            model.train(train_dataset)
 
             pos_acc, neg_acc = model.get_train_accuracies(0.5)
 
             print(
-                f"{str(number_trees)}:{str(max_tree_depth_in_literals)} - Positive Accuracy: {str(pos_acc)}. Negative Accuracy: {str(neg_acc)}")
+                f"{str(number_trees)}:{str(max_tree_depth)} - Positive Accuracy: {str(pos_acc)}. Negative Accuracy: {str(neg_acc)}")
 
             if pos_acc > 0.5 and neg_acc > 0.5:
                 if save:
                     model.save()
                 print("Model found!")
                 print(number_trees)
-                print(max_tree_depth_in_literals)
+                print(max_tree_depth)
                 return model
+            model.delete()
 
     raise Exception("A good model, to generate the knowledge gap dataset, could not be found.")
 
 def generate_knowledge_gap_data(dataset, fold_configuration, use_recursion, base_path):
-    train_dataset = dataset.generate_train_srldatabase(
-        fold_configuration["train"],
-        use_recursion=use_recursion
-    )
-
-    target_domain_metadata = dataset.get_target_domain_metadata()
-    best_model = search_best_model(train_dataset, target_domain_metadata, base_path)
+    best_model = search_best_model(dataset, fold_configuration, use_recursion, base_path)
     filtered_samples = best_model.process_data(min_fraction=0.01, score_threshold=0.5)
     best_model.delete()
 

@@ -340,27 +340,27 @@ def default_workflow(base_path: str, target_domain: str, model_settings, model_p
 
     return output
 
-def tl_experiment_1(base_path: str, model_path, target_domain: str, rounds: int, use_recursion: bool = True):
+def tl_experiment_1(base_path: str, model_path, target_domain_name: str, rounds: int, use_recursion: bool = True):
     data_path = f"./preprocessed/"
-    target_domain_path = os.path.join(data_path, target_domain)
+    target_domain_path = os.path.join(data_path, target_domain_name)
 
     domains = get_dataset_names(data_path)
 
     database = DatabaseWrapper()
-    database.process_target(target_domain_path)
+    database.process_target(target_domain_path, target_domain_name)
 
-    mappings_path = os.path.join("./mappings", f"{target_domain}.json")
+    mappings_path = os.path.join("./mappings", f"{target_domain_name}.json")
 
     with open(mappings_path, "r", encoding="utf-8") as f:
         mappings = json.load(f)
 
-    for source_domain in domains:
-        if source_domain == target_domain:
+    for source_domain_name in domains:
+        if source_domain_name == target_domain_name:
             continue
 
-        source_domain_path = os.path.join(data_path, source_domain)
+        source_domain_path = os.path.join(data_path, source_domain_name)
 
-        selected_mappings = select_mappings(mappings, source_domain, rounds)
+        selected_mappings = select_mappings(mappings, source_domain_name, rounds)
 
         for curr_mapping_key, curr_mapping in selected_mappings.items():
             source_domain_mapped_data = read_source_domain_and_apply_mapping(
@@ -371,7 +371,7 @@ def tl_experiment_1(base_path: str, model_path, target_domain: str, rounds: int,
 
             source_domain_converted_data = convert_datatomap_to_prologdata(source_domain_mapped_data)
 
-            database.process_source_from_data({source_domain: {curr_mapping_key: source_domain_converted_data}})
+            database.process_source_from_data({source_domain_name: {curr_mapping_key: source_domain_converted_data}})
 
             # train_metrics, test_metrics = training_workflow(
             #     base_path=base_path,
@@ -390,13 +390,13 @@ def tl_experiment_1(base_path: str, model_path, target_domain: str, rounds: int,
             train_metrics, test_metrics = kg_workflow(
                 base_path=base_path,
                 source_domain_mapped_data=source_domain_mapped_data,
-                target_domain=target_domain,
+                target_domain_name=target_domain_name,
                 model_settings={},
                 use_recursion=use_recursion,
                 rounds=rounds
             )
 
-            with open(os.path.join(base_path, f"{source_domain}_{target_domain}_kg_approach_results.json"), 'w') as file:
+            with open(os.path.join(base_path, f"{source_domain_name}_{target_domain_name}_kg_approach_results.json"), 'w') as file:
                 json.dump(
                     {"mapping": curr_mapping, "train_results": train_metrics, "test_results": test_metrics},
                     file
@@ -412,23 +412,17 @@ def tl_experiment_1(base_path: str, model_path, target_domain: str, rounds: int,
 
 # Knowledge Gap Functions
 
-def kg_workflow(base_path, source_domain_mapped_data, target_domain, model_settings, use_recursion: bool, rounds: int=3):
-    target_domain_path = f"./preprocessed/{target_domain}"
+def kg_workflow(base_path, source_domain_mapped_data, target_domain_name, model_settings, use_recursion: bool, rounds: int=3):
+    target_domain_path = f"./preprocessed/{target_domain_name}"
 
     target_dataset = DatabaseWrapper()
-    target_dataset.process_target(target_domain_path)
+    target_dataset.process_target(target_domain_path, target_domain_name)
     fold_splits = target_dataset.generate_fold_splits()
 
     tl_train_metrics_list = []
     tl_test_metrics_list = []
 
     for fold_configuration in fold_splits:
-
-        train_target_dataset = target_dataset.generate_train_srldatabase(
-            fold_configuration["train"],
-            use_recursion=use_recursion
-        )
-
         test_target_dataset = target_dataset.generate_test_srldatabase(
             fold_configuration["test"],
             use_recursion=use_recursion
@@ -447,14 +441,14 @@ def kg_workflow(base_path, source_domain_mapped_data, target_domain, model_setti
             transfer_learning_raw_dataset = get_transfer_dataset(
                 base_path=base_path,
                 source_domain_mapped_data=source_domain_mapped_data,
-                target_domain_name=target_domain,
+                target_domain_name=target_domain_name,
                 target_domain_metadata=target_dataset.get_target_domain_metadata(),
                 knowledge_gap_data=knowledge_gap_data
             )
 
             tl_dataset = DatabaseWrapper()
             tl_dataset.process_source_from_data(transfer_learning_raw_dataset)
-            tl_dataset.process_target(target_domain_path)
+            tl_dataset.process_target(target_domain_path, target_domain_name)
 
             transfer_learning_train_dataset = tl_dataset.generate_train_srldatabase(
                 fold_configuration["train"],
