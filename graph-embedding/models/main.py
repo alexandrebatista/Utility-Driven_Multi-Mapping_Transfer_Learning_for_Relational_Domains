@@ -9,7 +9,7 @@ from database.database import DatabaseWrapper
 from models.utils import extract_metrics_from_log, create_folder, create_folder, set_to_uuid, load_pickle, save_to_pickle
 from .selector_model import SelectorModel
 from .utils import create_folder, set_to_uuid, load_pickle, save_to_pickle, generate_folds
-from models.model import generate_knowledge_gap_data
+from models.model import generate_knowledge_gap_data, RdnBoost
 from models.selector_model import get_transfer_dataset
 from database.utils import extract_domain_metadata, read_target_domain, get_dataset_names, convert_datatomap_to_prologdata
 from mapping.apply_mappings import read_source_domain_and_apply_mapping
@@ -373,34 +373,37 @@ def tl_experiment_1(base_path: str, target_domain_name: str, rounds: int, use_re
 
             database.process_source_from_data({source_domain_name: {curr_mapping_key: source_domain_converted_data}})
 
-            # train_metrics, test_metrics = training_workflow(
-            #     base_path=base_path,
-            #     model_path=model_path,
-            #     database=database,
-            #     model_settings={},
-            #     use_recursion=use_recursion
-            # )
-            #
-            # with open(os.path.join(base_path, f"{source_domain}_{target_domain}_default_approach_results.json"), 'w') as file:
-            #     json.dump(
-            #         {"mapping": curr_mapping, "train_results": train_metrics, "test_results": test_metrics},
-            #         file
-            #     )
-
-            train_metrics, test_metrics = kg_workflow(
-                base_path=base_path,
-                source_domain_mapped_data=source_domain_mapped_data,
-                target_domain_name=target_domain_name,
-                model_settings={},
-                use_recursion=use_recursion,
-                rounds=rounds
-            )
-
-            with open(os.path.join(base_path, f"{source_domain_name}_{target_domain_name}_kg_approach_results.json"), 'w') as file:
-                json.dump(
-                    {"mapping": curr_mapping, "train_results": train_metrics, "test_results": test_metrics},
-                    file
+            if not os.path.isfile(os.path.join(base_path, f"{source_domain_name}_{target_domain_name}_default_approach_results.json")):
+                out = training_workflow(
+                    base_path=base_path,
+                    database=database,
+                    model_settings={},
+                    use_recursion=use_recursion
                 )
+
+                with open(os.path.join(base_path, f"{source_domain_name}_{target_domain_name}_default_approach_results.json"), 'w') as file:
+                    json.dump(
+                        {"mapping": curr_mapping, "results": out},
+                        file
+                    )
+
+            if not os.path.isfile(os.path.join(base_path, f"{source_domain_name}_{target_domain_name}_kg_approach_results.json")):
+                out = kg_workflow(
+                    base_path=base_path,
+                    source_domain_name=source_domain_name,
+                    mapping_key=curr_mapping_key,
+                    source_domain_mapped_data=source_domain_mapped_data,
+                    target_domain_name=target_domain_name,
+                    model_settings={},
+                    use_recursion=use_recursion,
+                    rounds=rounds
+                )
+
+                with open(os.path.join(base_path, f"{source_domain_name}_{target_domain_name}_kg_approach_results.json"), 'w') as file:
+                    json.dump(
+                        {"mapping": curr_mapping, "results": out},
+                        file
+                    )
 
     # Avaliar o resultado no conjunto de teste
     # Salvar os resultados
@@ -412,67 +415,71 @@ def tl_experiment_1(base_path: str, target_domain_name: str, rounds: int, use_re
 
 # Knowledge Gap Functions
 
-def kg_workflow(base_path, source_domain_mapped_data, target_domain_name, model_settings, use_recursion: bool, rounds: int=3):
+def kg_workflow(base_path, source_domain_name, mapping_key, source_domain_mapped_data, target_domain_name, model_settings, use_recursion: bool, rounds: int=3):
     target_domain_path = f"./preprocessed/{target_domain_name}"
 
     target_dataset = DatabaseWrapper()
     target_dataset.process_target(target_domain_path, target_domain_name)
     fold_splits = target_dataset.generate_fold_splits()
 
-    tl_train_metrics_list = []
-    tl_test_metrics_list = []
+    out = []
+    tl_not_possible = []
 
     for fold_configuration in fold_splits:
-        test_target_dataset = target_dataset.generate_test_srldatabase(
-            fold_configuration["test"],
-            use_recursion=use_recursion
-        )
-
         for _ in range(rounds):
+            result = {"transfer_learning": False, "fold_configuration": fold_configuration, "log": ""}
             # Generate dataset with misclassified by the model
-            knowledge_gap_data = generate_knowledge_gap_data(
-                dataset = target_dataset,
-                fold_configuration = fold_configuration,
-                use_recursion=use_recursion,
-                base_path=base_path
-            )
-
-            # Get transfer dataset
-            transfer_learning_raw_dataset = get_transfer_dataset(
-                base_path=base_path,
-                source_domain_mapped_data=source_domain_mapped_data,
-                target_domain_name=target_domain_name,
-                target_domain_metadata=target_dataset.get_target_domain_metadata(),
-                knowledge_gap_data=knowledge_gap_data
-            )
-
             tl_dataset = DatabaseWrapper()
-            tl_dataset.process_source_from_data(transfer_learning_raw_dataset)
-            tl_dataset.process_target(target_domain_path, target_domain_name)
 
-            transfer_learning_train_dataset = tl_dataset.generate_train_srldatabase(
-                fold_configuration["train"],
-                use_recursion=use_recursion
-            )
+            if fold_configuration["train"][0] not in tl_not_possible:
+                knowledge_gap_data = generate_knowledge_gap_data(
+                    dataset = target_dataset,
+                    fold_configuration = fold_configuration,
+                    use_recursion=use_recursion,
+                    base_path=base_path
+                )
+
+                # Get transfer dataset
+                if knowledge_gap_data is not None:
+                    transfer_learning_raw_dataset = get_transfer_dataset(
+                        base_path=base_path,
+                        source_domain_mapped_data=source_domain_mapped_data,
+                        target_domain_name=target_domain_name,
+                        target_domain_metadata=target_dataset.get_target_domain_metadata(),
+                        knowledge_gap_data=knowledge_gap_data
+                    )
+                    if transfer_learning_raw_dataset is not None:
+                        result["transfer_learning"] = True
+                        tl_dataset.process_source_from_data({source_domain_name: {mapping_key: transfer_learning_raw_dataset}})
+                    else:
+                        tl_not_possible.append(fold_configuration["train"][0])
+                        result["log"] += "Transfer-learning dataset could not be generated."
+                else:
+                    tl_not_possible.append(fold_configuration["train"][0])
+                    result["log"] += "Best model not found."
+
+            tl_dataset.process_target(target_domain_path, target_domain_name)
 
             tl_train_metrics, tl_test_metrics = kg_training_workflow(
                 base_path=base_path,
-                train_dataset=transfer_learning_train_dataset,
-                test_dataset=test_target_dataset,
+                dataset=tl_dataset,
+                use_recursion=use_recursion,
+                fold_configuration=fold_configuration,
                 model_settings=model_settings,
             )
 
-            tl_train_metrics_list.append(tl_train_metrics)
-            tl_test_metrics_list.append(tl_test_metrics)
+            result["train"] = tl_train_metrics
+            result["test"] = tl_test_metrics
 
-    return tl_train_metrics_list, tl_test_metrics_list
+            out.append(result)
 
-def training_workflow(base_path, model_path, database, use_recursion, model_settings=None, rounds=1):
+    return out
+
+def training_workflow(base_path, database, use_recursion, model_settings=None, rounds=1):
     if model_settings is None:
         model_settings = {}
 
-    train_metrics_list = []
-    test_metrics_list = []
+    out = []
 
     fold_splits = database.generate_fold_splits()
 
@@ -481,36 +488,54 @@ def training_workflow(base_path, model_path, database, use_recursion, model_sett
             train_database = database.generate_train_srldatabase(fold_configuration["train"], use_recursion=use_recursion)
             test_database = database.generate_test_srldatabase(fold_configuration["test"], use_recursion=use_recursion)
 
-            model = RDNBoost(**model_settings, path=base_path)
+            model = RdnBoost(target_domain_metadata=database.get_target_domain_metadata(),
+                             model_settings=model_settings,
+                             prefix_path=base_path,
+                             name="default_model")
 
-            ignore_stdout = True
-            model.fit(train_database, ignoreSTDOUT=ignore_stdout)
+            model.train(train_database)
+            train_metrics = model.get_train_metrics()
 
-            model.predict(train_database, ignoreSTDOUT=ignore_stdout, threshold=0.5)
-            train_metrics = extract_metrics_from_log(os.path.join(model_path, "bsrl_data/data0", "test_output.txt"))
+            model.test(test_database, convert=False)
+            test_metrics = model.get_test_metrics()
 
-            model.predict(test_database, threshold=0.5)
-            test_metrics = extract_metrics_from_log(os.path.join(model_path, "bsrl_data/data0", "test_output.txt"))
+            model.delete()
 
-            shutil.rmtree(os.path.join(base_path, "bsrl_data"))
+            out.append(
+                {
+                    "fold_configuration": fold_configuration,
+                    "train": train_metrics,
+                    "test": test_metrics
+                }
+            )
 
-            train_metrics_list.append(train_metrics)
-            test_metrics_list.append(test_metrics)
+    return out
 
-    return train_metrics_list, test_metrics_list
-
-def kg_training_workflow(base_path, train_dataset, test_dataset, model_settings=None):
+def kg_training_workflow(base_path, dataset, fold_configuration, use_recursion, model_settings=None):
     if model_settings is None:
         model_settings = {}
 
-    model = RDNBoost(**model_settings)
+    transfer_learning_train_dataset = dataset.generate_train_srldatabase(
+        fold_configuration["train"],
+        use_recursion=use_recursion
+    )
 
-    ignore_stdout = True
-    model.fit(train_dataset, ignoreSTDOUT=ignore_stdout)
-    model.predict(train_dataset, ignoreSTDOUT=ignore_stdout, threshold=0.5)
-    train_metrics = extract_metrics_from_log(os.path.join(base_path, "bsrl_data/data0", "test_output.txt"))
+    transfer_learning_test_dataset = dataset.generate_test_srldatabase(
+        fold_configuration["test"],
+        use_recursion=use_recursion
+    )
 
-    model.predict(test_dataset, ignoreSTDOUT=ignore_stdout, threshold=0.5)
-    test_metrics = extract_metrics_from_log(os.path.join(base_path, "bsrl_data/data0", "test_output.txt"))
+    model = RdnBoost(target_domain_metadata=dataset.get_target_domain_metadata(),
+                     model_settings=model_settings,
+                     prefix_path=base_path,
+                     name="kg_model")
+
+    model.train(transfer_learning_train_dataset)
+    train_metrics = model.get_train_metrics()
+
+    model.test(transfer_learning_test_dataset, convert=False)
+    test_metrics = model.get_test_metrics()
+
+    model.delete()
 
     return train_metrics, test_metrics

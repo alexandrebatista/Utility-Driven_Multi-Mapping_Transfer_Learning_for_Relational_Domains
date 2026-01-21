@@ -48,6 +48,8 @@ class RdnBoost:
             max_tree_depth_in_literals=self._model_settings.get("max_tree_depth_in_literals", -1),
             boxcox_lambda=self._model_settings.get("boxcox_lambda", 0),
             rdn_version=self._model_settings.get("rdn_version", "rdn"),
+            no_boost=self._model_settings.get("no_boost", False),
+            disable_limiters=self._model_settings.get("disable_limiters", False),
             path=self._rdn_boost_path
         )
 
@@ -58,12 +60,13 @@ class RdnBoost:
         self._model.predict(domain_data, threshold=0.5)
         self._extract_train_metrics()
 
-    def test(self, data):
+    def test(self, data, convert=True):
         #database = raw_data_to_database(data, self._target_domain_metadata)
-        database = graph_data_to_database(data, self._target_domain_metadata)
+        if convert:
+            data = graph_data_to_database(data, self._target_domain_metadata)
 
         self._test_metrics = {}
-        self._model.predict(database, threshold=0.5)
+        self._model.predict(data, threshold=0.5)
         self._extract_test_metrics()
 
     def _extract_train_metrics(self):
@@ -259,7 +262,8 @@ def search_best_model(dataset, fold_configuration, use_recursion, prefix_path, s
     from pathlib import Path
 
     target_domain_name = dataset.get_target_domain_name()
-    path = Path(os.path.join(prefix_path, f"selector_models/pkl/", f"best_model_{target_domain_name}"))
+    name = f"best_model_{target_domain_name}_{fold_configuration['train'][0]}"
+    path = Path(os.path.join(prefix_path, f"selector_models/pkl/", f"{name}.pkl"))
 
     if path.exists():
         return load_model(path)
@@ -271,10 +275,10 @@ def search_best_model(dataset, fold_configuration, use_recursion, prefix_path, s
         use_recursion=use_recursion
     )
 
-    model_settings = {"max_tree_depth_in_literals": 100}
+    model_settings = {"disable_limiters": True}
 
-    number_trees_list = [10, 20, 50, 100]
-    max_tree_depth_list = [3, 4, 5, 6, 7, 8]
+    number_trees_list = [50]
+    max_tree_depth_list = [8]
 
     for number_trees in number_trees_list:
         model_settings["nEstimators"] = number_trees
@@ -285,7 +289,7 @@ def search_best_model(dataset, fold_configuration, use_recursion, prefix_path, s
             model = RdnBoost(target_domain_metadata=dataset_metadata,
                              model_settings=model_settings,
                              prefix_path=prefix_path,
-                             name=f"best_model_{target_domain_name}")
+                             name=name)
 
             model.train(train_dataset)
 
@@ -302,17 +306,23 @@ def search_best_model(dataset, fold_configuration, use_recursion, prefix_path, s
                 print(max_tree_depth)
                 return model
             model.delete()
-
-    raise Exception("A good model, to generate the knowledge gap dataset, could not be found.")
+    return None
 
 def generate_knowledge_gap_data(dataset, fold_configuration, use_recursion, base_path):
     best_model = search_best_model(dataset, fold_configuration, use_recursion, base_path)
+
+    if best_model is None:
+        return None
+
     filtered_samples = best_model.process_data(min_fraction=0.01, score_threshold=0.5)
 
     knowledge_gap_samples = {
         "pos": [item["raw"] for item in filtered_samples["pos_below"]],
         "neg": [item["raw"] for item in filtered_samples["neg_below"]],
     }
+
+    if len(knowledge_gap_samples["pos"]) == 0 or len(knowledge_gap_samples["neg"]):
+        return None
 
     knowledge_gap_data = {
         **dataset.get_target_facts(fold_configuration["train"]), **knowledge_gap_samples

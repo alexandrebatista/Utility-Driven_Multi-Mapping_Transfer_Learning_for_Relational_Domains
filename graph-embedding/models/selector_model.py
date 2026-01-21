@@ -244,8 +244,8 @@ def get_transfer_dataset(base_path: str, source_domain_mapped_data, target_domai
 
     raw_transfer_dataset = {
         "facts": convert_to_prolog_data(source_domain_mapped_data["facts"]),
-        "pos": pos_transfer_samples,
-        "neg": neg_transfer_samples
+        "pos": [f"{sample['raw']}." for sample in pos_transfer_samples],
+        "neg": [f"{sample['raw'][1:]}." for sample in neg_transfer_samples]
     }
 
     selector_model.delete()
