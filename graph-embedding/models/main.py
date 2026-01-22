@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+from datetime import datetime
 
 from srlearn.rdn import RDNBoost
 
@@ -354,13 +355,16 @@ def tl_experiment_1(base_path: str, target_domain_name: str, rounds: int, use_re
     with open(mappings_path, "r", encoding="utf-8") as f:
         mappings = json.load(f)
 
+
     for source_domain_name in domains:
         if source_domain_name == target_domain_name:
             continue
 
         source_domain_path = os.path.join(data_path, source_domain_name)
-
         selected_mappings = select_mappings(mappings, source_domain_name, rounds)
+
+        # Criar chave para este par source-target
+        pair_key = f"{source_domain_name}_{target_domain_name}"
 
         for curr_mapping_key, curr_mapping in selected_mappings.items():
             source_domain_mapped_data = read_source_domain_and_apply_mapping(
@@ -373,43 +377,54 @@ def tl_experiment_1(base_path: str, target_domain_name: str, rounds: int, use_re
 
             database.process_source_from_data({source_domain_name: {curr_mapping_key: source_domain_converted_data}})
 
-            if not os.path.isfile(os.path.join(base_path, f"{source_domain_name}_{target_domain_name}_default_approach_results.json")):
-                out = training_workflow(
-                    base_path=base_path,
-                    database=database,
-                    model_settings={},
-                    use_recursion=use_recursion
-                )
+            # ========== KG APPROACH ==========
+            kg_results_file = os.path.join(base_path, f"{pair_key}_{curr_mapping_key}_kg_approach_results.json")
 
-                with open(os.path.join(base_path, f"{source_domain_name}_{target_domain_name}_default_approach_results.json"), 'w') as file:
-                    json.dump(
-                        {"mapping": curr_mapping, "results": out},
-                        file
+            if not os.path.isfile(kg_results_file):
+                print(f"[KG] Processing {pair_key} - {curr_mapping_key}")
+                try:
+                    out = kg_workflow(
+                        base_path=base_path,
+                        source_domain_name=source_domain_name,
+                        mapping_key=curr_mapping_key,
+                        source_domain_mapped_data=source_domain_mapped_data,
+                        target_domain_name=target_domain_name,
+                        model_settings={},
+                        use_recursion=use_recursion,
                     )
 
-            if not os.path.isfile(os.path.join(base_path, f"{source_domain_name}_{target_domain_name}_kg_approach_results.json")):
-                out = kg_workflow(
-                    base_path=base_path,
-                    source_domain_name=source_domain_name,
-                    mapping_key=curr_mapping_key,
-                    source_domain_mapped_data=source_domain_mapped_data,
-                    target_domain_name=target_domain_name,
-                    model_settings={},
-                    use_recursion=use_recursion,
-                    rounds=rounds
-                )
+                    # Salvar arquivo específico
+                    with open(kg_results_file, 'w') as file:
+                        json.dump(
+                            {"mapping": curr_mapping, "results": out},
+                            file,
+                            indent=2
+                        )
+                except Exception as e:
+                    print(f"[ERROR] KG approach failed: {e}")
 
-                with open(os.path.join(base_path, f"{source_domain_name}_{target_domain_name}_kg_approach_results.json"), 'w') as file:
-                    json.dump(
-                        {"mapping": curr_mapping, "results": out},
-                        file
+            # ========== DEFAULT APPROACH ==========
+            default_results_file = os.path.join(base_path, f"{pair_key}_{curr_mapping_key}_default_approach_results.json")
+            
+            if not os.path.isfile(default_results_file):
+                print(f"[DEFAULT] Processing {pair_key} - {curr_mapping_key}")
+                try:
+                    out = training_workflow(
+                        base_path=base_path,
+                        database=database,
+                        model_settings={},
+                        use_recursion=use_recursion
                     )
 
-    # Avaliar o resultado no conjunto de teste
-    # Salvar os resultados
-    # Dado um par source-target
-    # Escolher N mapeamentos do source. Se o total de mapeamentos for menor que N, usar o total. Salvar os mapeamentos escolhidos
-    # Para cada mapeamento, aplicar o mapeamento, juntar os datasets e treinar.
+                    # Salvar arquivo específico
+                    with open(default_results_file, 'w') as file:
+                        json.dump(
+                            {"mapping": curr_mapping, "results": out},
+                            file,
+                            indent=2
+                        )
+                except Exception as e:
+                    print(f"[ERROR] DEFAULT approach failed: {e}")
 
 # ======================================================================================================================
 
@@ -475,7 +490,7 @@ def kg_workflow(base_path, source_domain_name, mapping_key, source_domain_mapped
 
     return out
 
-def training_workflow(base_path, database, use_recursion, model_settings=None, rounds=1):
+def training_workflow(base_path, database, use_recursion, model_settings=None, rounds=3):
     if model_settings is None:
         model_settings = {}
 

@@ -15,7 +15,7 @@ for target_domain in target_domains:
     tl_experiment_1(
         base_path=base_path,
         target_domain_name=target_domain["domain"],
-        rounds=3,
+        rounds=10,
         use_recursion=target_domain["use_recursion"]
     )
 

@@ -321,7 +321,7 @@ def generate_knowledge_gap_data(dataset, fold_configuration, use_recursion, base
         "neg": [item["raw"] for item in filtered_samples["neg_below"]],
     }
 
-    if len(knowledge_gap_samples["pos"]) == 0 or len(knowledge_gap_samples["neg"]):
+    if len(knowledge_gap_samples["pos"]) == 0 or len(knowledge_gap_samples["neg"]) == 0:
         return None
 
     knowledge_gap_data = {

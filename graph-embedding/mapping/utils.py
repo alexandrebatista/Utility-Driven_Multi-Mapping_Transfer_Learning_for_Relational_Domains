@@ -15,8 +15,11 @@ def select_mappings(mappings_dict, source_domain=None, number_of_mappings_to_sel
         else:
             mappings_considered = list(mappings_dict.keys())
 
-        selected_mappings_keys = random.sample(mappings_considered, number_of_mappings_to_select) \
-            if number_of_mappings_to_select > len(mappings_considered) else mappings_considered
+        # Corrigir a lógica: fazer sample SE houver mapeamentos suficientes
+        selected_mappings_keys = random.sample(
+            mappings_considered, 
+            min(number_of_mappings_to_select, len(mappings_considered))
+        )
     else:
         raise Exception('Invalid selection strategy: {}'.format(selection_strategy))
 
