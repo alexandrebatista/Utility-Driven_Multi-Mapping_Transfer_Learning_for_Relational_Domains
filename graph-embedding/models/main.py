@@ -355,6 +355,12 @@ def tl_experiment_1(base_path: str, target_domain_name: str, rounds: int, use_re
     with open(mappings_path, "r", encoding="utf-8") as f:
         mappings = json.load(f)
 
+    # Inicializar estrutura consolidada
+    consolidated_results = {
+        "target_domain": target_domain_name,
+        "timestamp": datetime.now().isoformat(),
+        "experiments": {}
+    }
 
     for source_domain_name in domains:
         if source_domain_name == target_domain_name:
@@ -365,6 +371,13 @@ def tl_experiment_1(base_path: str, target_domain_name: str, rounds: int, use_re
 
         # Criar chave para este par source-target
         pair_key = f"{source_domain_name}_{target_domain_name}"
+        
+        # Inicializar entrada para este par
+        consolidated_results["experiments"][pair_key] = {
+            "source": source_domain_name,
+            "target": target_domain_name,
+            "mappings": {}
+        }
 
         for curr_mapping_key, curr_mapping in selected_mappings.items():
             source_domain_mapped_data = read_source_domain_and_apply_mapping(
@@ -376,6 +389,18 @@ def tl_experiment_1(base_path: str, target_domain_name: str, rounds: int, use_re
             source_domain_converted_data = convert_datatomap_to_prologdata(source_domain_mapped_data)
 
             database.process_source_from_data({source_domain_name: {curr_mapping_key: source_domain_converted_data}})
+
+            # Inicializar entrada para este mapeamento
+            consolidated_results["experiments"][pair_key]["mappings"][curr_mapping_key] = {
+                "mapping_metadata": {
+                    "source": curr_mapping.get("source"),
+                    "target": curr_mapping.get("target"),
+                    "id": curr_mapping.get("id")
+                },
+                "kg_approach": None,
+                "default_approach": None,
+                "status": "processing"
+            }
 
             # ========== KG APPROACH ==========
             kg_results_file = os.path.join(base_path, f"{pair_key}_{curr_mapping_key}_kg_approach_results.json")
@@ -390,7 +415,7 @@ def tl_experiment_1(base_path: str, target_domain_name: str, rounds: int, use_re
                         source_domain_mapped_data=source_domain_mapped_data,
                         target_domain_name=target_domain_name,
                         model_settings={},
-                        use_recursion=use_recursion,
+                        use_recursion=use_recursion
                     )
 
                     # Salvar arquivo específico
@@ -400,8 +425,22 @@ def tl_experiment_1(base_path: str, target_domain_name: str, rounds: int, use_re
                             file,
                             indent=2
                         )
+                    
+                    consolidated_results["experiments"][pair_key]["mappings"][curr_mapping_key]["kg_approach"] = out
+                    
                 except Exception as e:
                     print(f"[ERROR] KG approach failed: {e}")
+                    consolidated_results["experiments"][pair_key]["mappings"][curr_mapping_key]["kg_approach"] = {
+                        "error": str(e)
+                    }
+            else:
+                # Carregar resultados existentes
+                try:
+                    with open(kg_results_file, 'r') as file:
+                        loaded_data = json.load(file)
+                        consolidated_results["experiments"][pair_key]["mappings"][curr_mapping_key]["kg_approach"] = loaded_data.get("results")
+                except Exception as e:
+                    print(f"[ERROR] Loading KG results: {e}")
 
             # ========== DEFAULT APPROACH ==========
             default_results_file = os.path.join(base_path, f"{pair_key}_{curr_mapping_key}_default_approach_results.json")
@@ -423,8 +462,34 @@ def tl_experiment_1(base_path: str, target_domain_name: str, rounds: int, use_re
                             file,
                             indent=2
                         )
+                    
+                    consolidated_results["experiments"][pair_key]["mappings"][curr_mapping_key]["default_approach"] = out
+                    
                 except Exception as e:
                     print(f"[ERROR] DEFAULT approach failed: {e}")
+                    consolidated_results["experiments"][pair_key]["mappings"][curr_mapping_key]["default_approach"] = {
+                        "error": str(e)
+                    }
+            else:
+                # Carregar resultados existentes
+                try:
+                    with open(default_results_file, 'r') as file:
+                        loaded_data = json.load(file)
+                        consolidated_results["experiments"][pair_key]["mappings"][curr_mapping_key]["default_approach"] = loaded_data.get("results")
+                except Exception as e:
+                    print(f"[ERROR] Loading DEFAULT results: {e}")
+
+            # ========== ATUALIZAR JSON CONSOLIDADO ==========
+            consolidated_results["experiments"][pair_key]["mappings"][curr_mapping_key]["status"] = "completed"
+            
+            # Salvar consolidado após cada mapeamento processar
+            consolidated_file = os.path.join(base_path, f"{source_domain_name}_{target_domain_name}_mapping.json")
+            with open(consolidated_file, 'w') as file:
+                json.dump(consolidated_results, file, indent=2)
+            
+            print(f"[SAVED] Consolidated results updated: {consolidated_file}")
+
+    return consolidated_results
 
 # ======================================================================================================================
 
