@@ -1,55 +1,166 @@
+import os
+import json
+
 from .selector_model import SelectorModel
 from database.utils import graph_data_to_database, raw_data_to_database, convert_to_prolog_data, convert_datatomap_to_prologdata
+from mapping.apply_mappings import read_source_domain_and_apply_mapping
+from database.database import DatabaseWrapper
+from .model import RdnBoost, load_model
+
+no_recursion_datasets = ["cora", "imdb", "uwcse"]
+
+DATASETS_PATH = "./preprocessed/"
 
 
 class TransferlearningManager:
-    def __init__(self, base_path, source_domain_mapped_data):
+    def __init__(self, base_path, selected_mappings, target_domain_name):
         self._base_path = base_path
 
-        self._source_domain_mapped_data = source_domain_mapped_data
+        self._target_domain_name = target_domain_name
 
+        self._target_uses_recursion = not target_domain_name in no_recursion_datasets
 
+        self._selected_mappings = selected_mappings
 
-        pass
+        self._source_domains = self._load_source_domains()
 
-    def kg_workflow(base_path, source_domain_name, mapping_key, source_domain_mapped_data, target_domain_name,
-                    model_settings, use_recursion: bool, rounds: int = 3):
-        target_domain_path = f"./preprocessed/{target_domain_name}"
+        self._target_domain_path = os.path.join(DATASETS_PATH, target_domain_name)
 
-        target_dataset = DatabaseWrapper()
-        target_dataset.process_target(target_domain_path, target_domain_name)
-        fold_splits = target_dataset.generate_fold_splits()
+        self._dataset = DatabaseWrapper()
+        self._dataset.process_target(self._target_domain_path, target_domain_name)
+        self._target_domain_metadata = self._dataset.get_target_domain_metadata()
+        self._folds_split = self._dataset.generate_fold_splits()
 
+        mappings_path = os.path.join("./mappings", f"{target_domain_name}.json")
+        self._mappings = None
+        with open(mappings_path, "r", encoding="utf-8") as f:
+            self._mappings = json.load(f)
+
+    def reset(self, selected_mappings):
+        self._selected_mappings = selected_mappings
+        self._source_domains = self._load_source_domains()
+        self._dataset.reset_source_data()
+
+    def _load_source_domains(self):
+        mapped_data = {}
+
+        for mapping_key, mapping in self._selected_mappings.items():
+            source_domain_mapped_data = self._get_source_mapped_data(mapping)
+
+            source_domain_converted_data = convert_datatomap_to_prologdata(source_domain_mapped_data)
+
+            mapped_data = {mapping_key: source_domain_converted_data}
+
+        return mapped_data
+
+    def _get_source_mapped_data(self, mapping):
+        source_domain = mapping["source_domain"]
+        source_domain_data_path = os.path.join(DATASETS_PATH, source_domain)
+
+        return read_source_domain_and_apply_mapping(
+            source_domain_data_path,
+            mapping,
+            self._dataset.get_target_domain_metadata()
+        )
+
+    def get_knowledge_gap_data(self, fold_configuration):
+        best_model = self._search_target_best_model(fold_configuration)
+
+        if best_model is None:
+            return None
+
+        filtered_samples = best_model.process_data(min_fraction=0.01, score_threshold=0.5)
+
+        knowledge_gap_samples = {
+            "pos": [item["raw"] for item in filtered_samples["pos_below"]],
+            "neg": [item["raw"] for item in filtered_samples["neg_below"]],
+        }
+
+        if len(knowledge_gap_samples["pos"]) == 0 or len(knowledge_gap_samples["neg"]) == 0:
+            return None
+
+        knowledge_gap_data = {
+            **self._dataset.get_target_facts(fold_configuration["train"]), **knowledge_gap_samples
+        }
+
+        return knowledge_gap_data
+
+    def _search_target_best_model(self, fold_configuration, save=True):
+        from pathlib import Path
+
+        name = f"best_model_{self._target_domain_name}_{fold_configuration['train'][0]}"
+        path = Path(os.path.join(self._base_path, f"selector_models/pkl/", f"{name}.pkl"))
+
+        if path.exists():
+            return load_model(path)
+
+        dataset_metadata = self._dataset.get_target_domain_metadata()
+
+        train_dataset = self._dataset.generate_train_srldatabase(
+            fold_configuration["train"],
+            use_recursion=self._target_uses_recursion
+        )
+
+        model_settings = {"disable_limiters": True}
+
+        number_trees_list = [50]
+        max_tree_depth_list = [8]
+
+        for number_trees in number_trees_list:
+            model_settings["nEstimators"] = number_trees
+
+            for max_tree_depth in max_tree_depth_list:
+                model_settings["maxTreeDepth"] = max_tree_depth
+
+                model = RdnBoost(target_domain_metadata=dataset_metadata,
+                                 model_settings=model_settings,
+                                 prefix_path=self._base_path,
+                                 name=name)
+
+                model.train(train_dataset)
+
+                pos_acc, neg_acc = model.get_train_accuracies(0.5)
+
+                print(
+                    f"{str(number_trees)}:{str(max_tree_depth)} - Positive Accuracy: {str(pos_acc)}. Negative Accuracy: {str(neg_acc)}")
+
+                if pos_acc > 0.5 and neg_acc > 0.5:
+                    if save:
+                        model.save()
+                    print("Model found!")
+                    print(number_trees)
+                    print(max_tree_depth)
+                    return model
+                model.delete()
+
+        return None
+
+    def kg_workflow(self, rounds: int = 3):
         out = []
         tl_not_possible = []
 
-        for fold_configuration in fold_splits:
+        for fold_configuration in self._folds_split:
             for _ in range(rounds):
+                self._dataset.reset_source_data()
+
                 result = {"transfer_learning": False, "fold_configuration": fold_configuration, "log": ""}
                 # Generate dataset with misclassified by the model
-                tl_dataset = DatabaseWrapper()
 
                 if fold_configuration["train"][0] not in tl_not_possible:
-                    knowledge_gap_data = generate_knowledge_gap_data(
-                        dataset=target_dataset,
+                    knowledge_gap_data = self.get_knowledge_gap_data(
                         fold_configuration=fold_configuration,
-                        use_recursion=use_recursion,
-                        base_path=base_path
                     )
 
                     # Get transfer dataset
                     if knowledge_gap_data is not None:
-                        transfer_learning_raw_dataset = get_transfer_dataset(
-                            base_path=base_path,
-                            source_domain_mapped_data=source_domain_mapped_data,
-                            target_domain_name=target_domain_name,
-                            target_domain_metadata=target_dataset.get_target_domain_metadata(),
+                        transfer_learning_raw_dataset = self._get_transfer_dataset(
                             knowledge_gap_data=knowledge_gap_data
                         )
+
                         if transfer_learning_raw_dataset is not None:
                             result["transfer_learning"] = True
-                            tl_dataset.process_source_from_data(
-                                {source_domain_name: {mapping_key: transfer_learning_raw_dataset}})
+                            self._dataset.process_source_from_data(transfer_learning_raw_dataset)
+
                         else:
                             tl_not_possible.append(fold_configuration["train"][0])
                             result["log"] += "Transfer-learning dataset could not be generated."
@@ -57,15 +168,11 @@ class TransferlearningManager:
                         tl_not_possible.append(fold_configuration["train"][0])
                         result["log"] += "Best model not found."
 
-                tl_dataset.process_target(target_domain_path, target_domain_name)
-
-                tl_train_metrics, tl_test_metrics = kg_training_workflow(
-                    base_path=base_path,
-                    dataset=tl_dataset,
-                    use_recursion=use_recursion,
-                    fold_configuration=fold_configuration,
-                    model_settings=model_settings,
+                tl_train_metrics, tl_test_metrics = self._kg_training_workflow(
+                    fold_configuration=fold_configuration
                 )
+
+                self._dataset.reset_source_data()
 
                 result["train"] = tl_train_metrics
                 result["test"] = tl_test_metrics
@@ -74,31 +181,113 @@ class TransferlearningManager:
 
         return out
 
+    def _get_transfer_dataset(self, knowledge_gap_data):
+        transfer_dataset = {}
 
-    def get_transfer_dataset(base_path: str, source_domain_mapped_data, target_domain_name: str, target_domain_metadata, knowledge_gap_data):
         if knowledge_gap_data is not None:
-            valid_predicates = list(source_domain_mapped_data["facts"].keys()) + list(source_domain_mapped_data["pos"].keys())
+            for mapping_key, mapped_data in self._source_domains.items():
+                source_domain_name = self._selected_mappings[mapping_key]["source"]
 
-            selector_model = SelectorModel(valid_predicates, target=target_domain_name, target_domain_metadata=target_domain_metadata, prefix_path=base_path)
+                valid_predicates = list(source_domain_mapped_data["facts"].keys()) + list(source_domain_mapped_data["pos"].keys())
 
-            # Learn the knowledge gap patterns
-            selector_model.train(knowledge_gap_data)
+                selector_model = SelectorModel(
+                    valid_predicates=valid_predicates,
+                    target=self._target_domain_name,
+                    target_domain_metadata=self._target_domain_metadata,
+                    prefix_path=self._base_path
+                )
 
-            # Look for source domain samples whose patterns match knowledge gap ones.
-            source_domain_converted_data = convert_datatomap_to_prologdata(source_domain_mapped_data)
-            selector_model.test(source_domain_converted_data)
+                # Learn the knowledge gap patterns
+                selector_model.train(knowledge_gap_data)
 
-            pos_transfer_samples, neg_transfer_samples = selector_model.get_best_samples()
+                # Look for source domain samples whose patterns match knowledge gap ones.
+                selector_model.test(mapped_data)
 
-            raw_transfer_dataset = {
-                "facts": convert_to_prolog_data(source_domain_mapped_data["facts"]),
-                "pos": [f"{sample['raw']}." for sample in pos_transfer_samples],
-                "neg": [f"{sample['raw'][1:]}." for sample in neg_transfer_samples]
-            }
+                pos_transfer_samples, neg_transfer_samples = selector_model.get_best_samples()
 
-            selector_model.delete()
+                raw_transfer_dataset = {
+                    "facts": mapped_data["facts"],
+                    "pos": [f"{sample['raw']}." for sample in pos_transfer_samples],
+                    "neg": [f"{sample['raw'][1:]}." for sample in neg_transfer_samples]
+                }
 
-            return raw_transfer_dataset
+                selector_model.delete()
+
+                if source_domain_name not in transfer_dataset:
+                    transfer_dataset[source_domain_name] = {mapping_key: raw_transfer_dataset}
+                else:
+                    transfer_dataset[source_domain_name][mapping_key] = raw_transfer_dataset
+
+            return transfer_dataset
 
         else:
             pass
+
+    def _kg_training_workflow(self, fold_configuration):
+        transfer_learning_train_dataset = self._dataset.generate_train_srldatabase(
+            fold_configuration["train"],
+            use_recursion=self._target_uses_recursion,
+        )
+
+        transfer_learning_test_dataset = self._dataset.generate_test_srldatabase(
+            fold_configuration["test"],
+            use_recursion=self._target_uses_recursion,
+        )
+
+        model = RdnBoost(
+            target_domain_metadata=self._target_domain_metadata,
+            prefix_path=self._base_path,
+            name="kg_model"
+        )
+
+        model.train(transfer_learning_train_dataset)
+        train_metrics = model.get_train_metrics()
+
+        model.test(transfer_learning_test_dataset, convert=False)
+        test_metrics = model.get_test_metrics()
+
+        model.delete()
+
+        return train_metrics, test_metrics
+
+    def default_transfer_learning(self, rounds):
+        out = []
+
+        for fold_configuration in self._folds_split:
+            for _ in range(rounds):
+                train_database = self._dataset.generate_train_srldatabase(
+                    fold_configuration["train"],
+                    use_recursion=self._target_uses_recursion,
+                )
+
+                test_database = self._dataset.generate_test_srldatabase(
+                    fold_configuration["test"],
+                    use_recursion=self._target_uses_recursion
+                )
+
+                model = RdnBoost(
+                    target_domain_metadata=self._target_domain_metadata,
+                    prefix_path=self._base_path,
+                    name="default_model"
+                )
+
+                model.train(train_database)
+                train_metrics = model.get_train_metrics()
+
+                model.test(test_database, convert=False)
+                test_metrics = model.get_test_metrics()
+
+                model.delete()
+
+                out.append(
+                    {
+                        "fold_configuration": fold_configuration,
+                        "train": train_metrics,
+                        "test": test_metrics
+                    }
+                )
+
+        return out
+
+    def kg_transfer_learning(self, rounds):
+        pass
