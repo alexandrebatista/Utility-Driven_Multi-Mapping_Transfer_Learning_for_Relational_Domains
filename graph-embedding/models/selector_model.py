@@ -98,7 +98,8 @@ class SelectorModel:
 
         estimates = self.load_estimates()
         best_samples = [item for item in estimates if item.get('score', -1) > threshold]
-        return split_by_label(best_samples)
+        best_pos, best_neg = split_by_label(best_samples)
+        return best_pos, best_neg
 
     def load_estimates(self):
         """
@@ -115,8 +116,6 @@ class SelectorModel:
 
         filepath = os.path.join(self._rdn_boost_path, "bsrl_data", "data0", "test",
                                 f"results_{self._target_domain_metadata['target_predicate']}.db")
-
-        print(filepath)
 
         with open(filepath, "r") as f:
             for line in f:
@@ -153,7 +152,7 @@ class SelectorModel:
         estimates = self.load_estimates()
         return [item for item in estimates if item.get('score', 1) <= threshold]
 
-    def get_train_accuracies(self, threshold):
+    def get_test_accuracies(self, threshold=0.5):
         import numpy as np
 
         scores = self.load_estimates()

@@ -18,8 +18,9 @@ for target_domain_name in target_domains:
         if source_domain_name == target_domain_name:
             continue
 
-        tl_manager.select_mappings(source_domain_name=source_domain_name, number_of_mappings=5)
-
+        for _ in range(5):
+            tl_manager.select_mappings(source_domain_name=source_domain_name, number_of_mappings=1)
+            tl_manager.perform_transfer_learning()
 
 
 

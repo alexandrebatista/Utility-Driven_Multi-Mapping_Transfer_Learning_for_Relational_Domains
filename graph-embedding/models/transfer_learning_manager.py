@@ -1,5 +1,6 @@
 import os
 import json
+from collections import defaultdict
 
 from database.utils import graph_data_to_database, raw_data_to_database, convert_to_prolog_data, convert_datatomap_to_prologdata
 from database.database import DatabaseWrapper
@@ -143,22 +144,23 @@ class TransferlearningManager:
         return None
 
     def _get_transfer_dataset(self, knowledge_gap_data):
-        transfer_dataset = {}
+        transfer_dataset = defaultdict(dict)
 
-        if knowledge_gap_data is not None:
-            for mapping_key, mapped_data in self._source_domains.items():
-                source_domain_name = self._selected_mappings[mapping_key]["source"]
+        ratio = 0.5
 
-                valid_predicates = []
-                #valid_predicates = list(source_domain_mapped_data["facts"].keys()) + list(source_domain_mapped_data["pos"].keys())
+        for mapping_key, mapped_data in self._source_domains.items():
+            source_domain_name = self._selected_mappings[mapping_key]["source"]
+            valid_predicates = []
+            # valid_predicates = list(source_domain_mapped_data["facts"].keys()) + list(source_domain_mapped_data["pos"].keys())
 
-                selector_model = SelectorModel(
-                    valid_predicates=valid_predicates,
-                    target=self._target_domain_name,
-                    target_domain_metadata=self._target_domain_metadata,
-                    prefix_path=self._base_path
-                )
+            selector_model = SelectorModel(
+                valid_predicates=valid_predicates,
+                target=self._target_domain_name,
+                target_domain_metadata=self._target_domain_metadata,
+                prefix_path=self._base_path
+            )
 
+            if knowledge_gap_data is not None:
                 # Learn the knowledge gap patterns
                 selector_model.train(knowledge_gap_data)
 
@@ -173,17 +175,34 @@ class TransferlearningManager:
                     "neg": [f"{sample['raw'][1:]}." for sample in neg_transfer_samples]
                 }
 
-                selector_model.delete()
+                transfer_dataset[source_domain_name][mapping_key] = raw_transfer_dataset
 
-                if source_domain_name not in transfer_dataset:
-                    transfer_dataset[source_domain_name] = {mapping_key: raw_transfer_dataset}
-                else:
+            else:
+                # Learn the patterns in the mapped data
+                selector_model.train(mapped_data)
+
+                # Look for source domain samples whose patterns match knowledge gap ones.
+                selector_model.test(mapped_data)
+
+                pos_transfer_samples, neg_transfer_samples = selector_model.get_best_samples()
+
+                # Check if the learnt patterns are useful in the target domain
+                selector_model.test(mapped_data)
+
+                pos_acc, neg_acc = selector_model.get_test_accuracies()
+
+                if pos_acc > 0.5 and neg_acc > 0.5:
+                    raw_transfer_dataset = {
+                        "facts": mapped_data["facts"],
+                        "pos": [f"{sample['raw']}." for sample in pos_transfer_samples],
+                        "neg": [f"{sample['raw'][1:]}." for sample in neg_transfer_samples]
+                    }
+
                     transfer_dataset[source_domain_name][mapping_key] = raw_transfer_dataset
 
-            return transfer_dataset
+            selector_model.delete()
 
-        else:
-            pass
+        return transfer_dataset
 
     def _kg_training_workflow(self, fold_configuration):
         transfer_learning_train_dataset = self._dataset.generate_train_srldatabase(
@@ -212,7 +231,7 @@ class TransferlearningManager:
 
         return train_metrics, test_metrics
 
-    def default_transfer_learning(self, rounds):
+    def default_transfer_learning(self, rounds:int = 3):
         out = []
 
         for fold_configuration in self._folds_split:
@@ -263,6 +282,7 @@ class TransferlearningManager:
                 # Generate dataset with misclassified by the model
 
                 if fold_configuration["train"][0] not in tl_not_possible:
+                    # Search for a deficiency in the dataset
                     knowledge_gap_data = self.get_knowledge_gap_data(
                         fold_configuration=fold_configuration,
                     )
@@ -281,6 +301,7 @@ class TransferlearningManager:
                             tl_not_possible.append(fold_configuration["train"][0])
                             result["log"] += "Transfer-learning dataset could not be generated."
                     else:
+                        # Transfer learning is not suitable.
                         tl_not_possible.append(fold_configuration["train"][0])
                         result["log"] += "Best model not found."
 
@@ -296,3 +317,18 @@ class TransferlearningManager:
                 out.append(result)
 
         return out
+
+    def perform_transfer_learning(self):
+        source_domains = [mapping["source"] for mapping in self._selected_mappings.values()]
+
+        results = {
+            "target": self._target_domain_name,
+            "source": source_domains,
+            "mappings": list(self._selected_mappings.values())
+        }
+
+        default_tl_out = self.default_transfer_learning()
+        kg_tl_out = self.kg_transfer_learning()
+
+        results["default_transfer_learning_results"] = default_tl_out
+        results["kg_transfer_learning_results"] = kg_tl_out
