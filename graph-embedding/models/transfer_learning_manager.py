@@ -73,23 +73,26 @@ class TransferlearningManager:
         best_model = self._search_target_best_model(fold_configuration)
 
         if best_model is None:
-            return None
+            return None, None
 
         filtered_samples = best_model.process_data(min_fraction=0.01, score_threshold=0.5)
 
-        knowledge_gap_samples = {
+        knowledge_gap_data = {
             "pos": [item["raw"] for item in filtered_samples["pos_below"]],
             "neg": [item["raw"] for item in filtered_samples["neg_below"]],
+            **self._dataset.get_target_facts(fold_configuration["train"]),
         }
 
-        if len(knowledge_gap_samples["pos"]) == 0 or len(knowledge_gap_samples["neg"]) == 0:
-            return None
-
-        knowledge_gap_data = {
-            **self._dataset.get_target_facts(fold_configuration["train"]), **knowledge_gap_samples
+        knowledge_data = {
+            "pos": [item["raw"] for item in filtered_samples["pos_above"]],
+            "neg": [item["raw"] for item in filtered_samples["neg_above"]],
+            **self._dataset.get_target_facts(fold_configuration["train"]),
         }
 
-        return knowledge_gap_data
+        if len(knowledge_gap_data["pos"]) == 0 or len(knowledge_gap_data["neg"]) == 0:
+            return None, knowledge_data
+
+        return knowledge_gap_data, knowledge_data
 
     def _search_target_best_model(self, fold_configuration, save=True):
         from pathlib import Path
@@ -143,15 +146,43 @@ class TransferlearningManager:
 
         return None
 
-    def _get_transfer_dataset(self, knowledge_gap_data):
+    def _get_transfer_dataset(self, knowledge_gap_data, knowledge_data):
+        import math
+
         transfer_dataset = defaultdict(dict)
 
-        ratio = 0.5
+        gap_pos_size = len(knowledge_gap_data["pos"])
+        knowledge_pos_size = len(knowledge_data["pos"])
+
+        total_pos = gap_pos_size + knowledge_pos_size
+
+        ratio = 0.2
+        negative_multiplier = 2  # 2 negativas para cada 1 positiva
+
+        # 1. Calcula a necessidade da âncora (POSITIVOS) baseada no ratio de cobertura
+        # Mantemos a fórmula original aqui para definir o "volume" de dados necessários
+        needed_pos = (ratio * total_pos - gap_pos_size) / (1 - ratio)
+        needed_pos = max(0, math.ceil(needed_pos))
+
+        # 2. Calcula as negativas baseadas EXCLUSIVAMENTE na quantidade de positivas
+        # Ignoramos o 'ratio' original para as negativas e obedecemos a regra 2:1
+        needed_neg = needed_pos * negative_multiplier
+
+        samples_added = {
+            "pos": 0,
+            "neg": 0
+        }
 
         for mapping_key, mapped_data in self._source_domains.items():
             source_domain_name = self._selected_mappings[mapping_key]["source"]
-            valid_predicates = []
+            valid_predicates = [
+                predicate for predicate in list(self._selected_mappings[mapping_key]["predicate_mappings"].values())
+                if predicate is not None
+            ] + [self._selected_mappings[mapping_key]["target_predicate"]]
             # valid_predicates = list(source_domain_mapped_data["facts"].keys()) + list(source_domain_mapped_data["pos"].keys())
+
+            if samples_added["pos"] == needed_pos and samples_added["neg"] == needed_neg:
+                break
 
             selector_model = SelectorModel(
                 valid_predicates=valid_predicates,
@@ -169,10 +200,16 @@ class TransferlearningManager:
 
                 pos_transfer_samples, neg_transfer_samples = selector_model.get_best_samples()
 
+                number_pos_samples_to_add = needed_pos - samples_added["pos"]
+                number_neg_samples_to_add = needed_neg - samples_added["neg"]
+
+                samples_added["pos"] += len(pos_transfer_samples[:number_pos_samples_to_add])
+                samples_added["neg"] += len(neg_transfer_samples[:number_neg_samples_to_add])
+
                 raw_transfer_dataset = {
                     "facts": mapped_data["facts"],
-                    "pos": [f"{sample['raw']}." for sample in pos_transfer_samples],
-                    "neg": [f"{sample['raw'][1:]}." for sample in neg_transfer_samples]
+                    "pos": [f"{sample['raw']}." for sample in pos_transfer_samples[:number_pos_samples_to_add]],
+                    "neg": [f"{sample['raw'][1:]}." for sample in neg_transfer_samples[:number_neg_samples_to_add]]
                 }
 
                 transfer_dataset[source_domain_name][mapping_key] = raw_transfer_dataset
@@ -192,10 +229,16 @@ class TransferlearningManager:
                 pos_acc, neg_acc = selector_model.get_test_accuracies()
 
                 if pos_acc > 0.5 and neg_acc > 0.5:
+                    number_pos_samples_to_add = needed_pos - samples_added["pos"]
+                    number_neg_samples_to_add = needed_neg - samples_added["neg"]
+
+                    samples_added["pos"] += len(pos_transfer_samples[:number_pos_samples_to_add])
+                    samples_added["neg"] += len(neg_transfer_samples[:number_neg_samples_to_add])
+
                     raw_transfer_dataset = {
                         "facts": mapped_data["facts"],
-                        "pos": [f"{sample['raw']}." for sample in pos_transfer_samples],
-                        "neg": [f"{sample['raw'][1:]}." for sample in neg_transfer_samples]
+                        "pos": [f"{sample['raw']}." for sample in pos_transfer_samples[:number_pos_samples_to_add]],
+                        "neg": [f"{sample['raw'][1:]}." for sample in neg_transfer_samples[:number_neg_samples_to_add]]
                     }
 
                     transfer_dataset[source_domain_name][mapping_key] = raw_transfer_dataset
@@ -283,14 +326,15 @@ class TransferlearningManager:
 
                 if fold_configuration["train"][0] not in tl_not_possible:
                     # Search for a deficiency in the dataset
-                    knowledge_gap_data = self.get_knowledge_gap_data(
+                    knowledge_gap_data, knowledge_data = self.get_knowledge_gap_data(
                         fold_configuration=fold_configuration,
                     )
 
                     # Get transfer dataset
                     if knowledge_gap_data is not None:
                         transfer_learning_raw_dataset = self._get_transfer_dataset(
-                            knowledge_gap_data=knowledge_gap_data
+                            knowledge_gap_data=knowledge_gap_data,
+                            knowledge_data=knowledge_data
                         )
 
                         if transfer_learning_raw_dataset is not None:
@@ -318,6 +362,31 @@ class TransferlearningManager:
 
         return out
 
+    def _save_results(self, results):
+        """Salva os resultados do transfer learning em um arquivo JSON."""
+        import shutil
+        
+        results_dir = os.path.join(self._base_path, "results")
+        os.makedirs(results_dir, exist_ok=True)
+        
+        source_domains = "_".join(results["source"])
+        base_filename = f"{source_domains}_{self._target_domain_name}.json"
+        filepath = os.path.join(results_dir, base_filename)
+        
+        # Se arquivo já existe, adiciona número no final
+        if os.path.exists(filepath):
+            counter = 1
+            name, ext = os.path.splitext(base_filename)
+            while os.path.exists(os.path.join(results_dir, f"{name}_{counter}{ext}")):
+                counter += 1
+            filepath = os.path.join(results_dir, f"{name}_{counter}{ext}")
+        
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+        
+        print(f"Resultados salvos em: {filepath}")
+        return filepath
+
     def perform_transfer_learning(self):
         source_domains = [mapping["source"] for mapping in self._selected_mappings.values()]
 
@@ -332,3 +401,8 @@ class TransferlearningManager:
 
         results["default_transfer_learning_results"] = default_tl_out
         results["kg_transfer_learning_results"] = kg_tl_out
+        
+        # Salva os resultados em arquivo JSON
+        self._save_results(results)
+        
+        return results
