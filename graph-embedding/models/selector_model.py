@@ -23,8 +23,6 @@ class SelectorModel:
         self._train_output_path = os.path.join(self._rdn_boost_path, "bsrl_data/data0", "train_output.txt")
         self._test_output_path = os.path.join(self._rdn_boost_path, "bsrl_data/data0", "test_output.txt")
 
-
-
         self._model_settings = model_settings if model_settings is not None else {}
 
         print(model_settings)
@@ -173,6 +171,10 @@ class SelectorModel:
         neg_acc = np.sum(y_pred[neg_mask] == 0) / np.sum(neg_mask) if np.sum(neg_mask) > 0 else 0
 
         return float(pos_acc), float(neg_acc)
+
+    def is_reliable(self, threshold=0.5):
+        pos_acc, neg_acc = self.get_test_accuracies()
+        return pos_acc > threshold and neg_acc > threshold
 
     def save(self):
         """

@@ -225,56 +225,28 @@ class TransferlearningManager:
                 predicate for predicate in list(self._selected_mappings[mapping_key]["predicate_mappings"].values())
                 if predicate is not None
             ]
-            # valid_predicates = list(source_domain_mapped_data["facts"].keys()) + list(source_domain_mapped_data["pos"].keys())
 
             if samples_added["pos"] == needed_pos and samples_added["neg"] == needed_neg:
                 break
 
-            selector_model = SelectorModel(
-                valid_predicates=valid_predicates,
-                target=self._target_domain_name,
-                target_domain_metadata=self._target_domain_metadata,
-                prefix_path=self._base_path
-            )
-
+            approach_1_failed = False
             if knowledge_gap_data is not None:
+                selector_model = SelectorModel(
+                    valid_predicates=valid_predicates,
+                    target=self._target_domain_name,
+                    target_domain_metadata=self._target_domain_metadata,
+                    prefix_path=self._base_path
+                )
+
                 # Learn the knowledge gap patterns
                 selector_model.train(knowledge_gap_data)
 
-                # Look for source domain samples whose patterns match knowledge gap ones.
-                selector_model.test(mapped_data)
+                if selector_model.is_reliable():
+                    # Look for source domain samples whose patterns match knowledge gap ones.
+                    selector_model.test(mapped_data)
 
-                pos_transfer_samples, neg_transfer_samples = selector_model.get_best_samples()
+                    pos_transfer_samples, neg_transfer_samples = selector_model.get_best_samples()
 
-                number_pos_samples_to_add = needed_pos - samples_added["pos"]
-                number_neg_samples_to_add = needed_neg - samples_added["neg"]
-
-                samples_added["pos"] += len(pos_transfer_samples[:number_pos_samples_to_add])
-                samples_added["neg"] += len(neg_transfer_samples[:number_neg_samples_to_add])
-
-                raw_transfer_dataset = {
-                    "facts": mapped_data["facts"],
-                    "pos": [f"{sample['raw']}." for sample in pos_transfer_samples[:number_pos_samples_to_add]],
-                    "neg": [f"{sample['raw'][1:]}." for sample in neg_transfer_samples[:number_neg_samples_to_add]]
-                }
-
-                transfer_dataset[source_domain_name][mapping_key] = raw_transfer_dataset
-
-            else:
-                # Learn the patterns in the mapped data
-                selector_model.train(mapped_data)
-
-                # Look for source domain samples whose patterns match knowledge gap ones.
-                selector_model.test(mapped_data)
-
-                pos_transfer_samples, neg_transfer_samples = selector_model.get_best_samples()
-
-                # Check if the learnt patterns are useful in the target domain
-                selector_model.test(mapped_data)
-
-                pos_acc, neg_acc = selector_model.get_test_accuracies()
-
-                if pos_acc > 0.5 and neg_acc > 0.5:
                     number_pos_samples_to_add = needed_pos - samples_added["pos"]
                     number_neg_samples_to_add = needed_neg - samples_added["neg"]
 
@@ -288,8 +260,46 @@ class TransferlearningManager:
                     }
 
                     transfer_dataset[source_domain_name][mapping_key] = raw_transfer_dataset
+                else:
+                    approach_1_failed = True
 
-            selector_model.delete()
+                selector_model.delete()
+            else:
+                approach_1_failed = True
+
+            if approach_1_failed:
+                selector_model = SelectorModel(
+                    valid_predicates=valid_predicates,
+                    target=self._target_domain_name,
+                    target_domain_metadata=self._target_domain_metadata,
+                    prefix_path=self._base_path
+                )
+
+                # Learn the patterns in the mapped data
+                selector_model.train(mapped_data)
+
+                if selector_model.is_reliable():
+                    pos_transfer_samples, neg_transfer_samples = selector_model.get_best_samples()
+
+                    # Look for source domain samples whose patterns match knowledge gap ones.
+                    selector_model.test(knowledge_gap_data)
+
+                    if selector_model.is_reliable():
+                        number_pos_samples_to_add = needed_pos - samples_added["pos"]
+                        number_neg_samples_to_add = needed_neg - samples_added["neg"]
+
+                        samples_added["pos"] += len(pos_transfer_samples[:number_pos_samples_to_add])
+                        samples_added["neg"] += len(neg_transfer_samples[:number_neg_samples_to_add])
+
+                        raw_transfer_dataset = {
+                            "facts": mapped_data["facts"],
+                            "pos": [f"{sample['raw']}." for sample in pos_transfer_samples[:number_pos_samples_to_add]],
+                            "neg": [f"{sample['raw'][1:]}." for sample in neg_transfer_samples[:number_neg_samples_to_add]]
+                        }
+
+                        transfer_dataset[source_domain_name][mapping_key] = raw_transfer_dataset
+
+                selector_model.delete()
 
         return transfer_dataset
 
@@ -323,18 +333,20 @@ class TransferlearningManager:
     def default_transfer_learning(self, rounds:int = 3):
         out = []
 
+        self._dataset.process_source_from_data(self._source_domains)
+
         for fold_configuration in self._folds_split:
+            train_database = self._dataset.generate_train_srldatabase(
+                fold_configuration["train"],
+                use_recursion=self._target_uses_recursion,
+            )
+
+            test_database = self._dataset.generate_test_srldatabase(
+                fold_configuration["test"],
+                use_recursion=self._target_uses_recursion
+            )
+
             for _ in range(rounds):
-                train_database = self._dataset.generate_train_srldatabase(
-                    fold_configuration["train"],
-                    use_recursion=self._target_uses_recursion,
-                )
-
-                test_database = self._dataset.generate_test_srldatabase(
-                    fold_configuration["test"],
-                    use_recursion=self._target_uses_recursion
-                )
-
                 model = RdnBoost(
                     target_domain_metadata=self._target_domain_metadata,
                     prefix_path=self._base_path,
@@ -356,6 +368,8 @@ class TransferlearningManager:
                         "test": test_metrics
                     }
                 )
+
+        self._dataset.reset_source_data()
 
         return out
 
@@ -416,7 +430,8 @@ class TransferlearningManager:
         os.makedirs(results_dir, exist_ok=True)
         
         source_domains = "_".join(results["source"])
-        base_filename = f"{source_domains}_{self._target_domain_name}.json"
+        mapping_ids = "-".join(self._selected_mappings.keys())
+        base_filename = f"{source_domains}_{self._target_domain_name}_{mapping_ids}.json"
         filepath = os.path.join(results_dir, base_filename)
         
         # Se arquivo já existe, adiciona número no final
