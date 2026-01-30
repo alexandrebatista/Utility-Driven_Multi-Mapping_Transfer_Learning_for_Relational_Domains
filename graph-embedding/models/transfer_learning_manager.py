@@ -23,8 +23,6 @@ class TransferlearningManager:
 
         self._target_uses_recursion = not target_domain_name in no_recursion_datasets
 
-        self._source_domains = self._load_source_domains()
-
         self._target_domain_path = os.path.join(DATASETS_PATH, target_domain_name)
 
         self._dataset = DatabaseWrapper()
@@ -34,13 +32,56 @@ class TransferlearningManager:
 
         self._mappings_path = os.path.join("./mappings", f"{target_domain_name}.json")
 
+        self._source_domains = None
         self._selected_mappings = None
+
+        self._best_models_found_path = os.path.join(self._base_path, f"best_models_found.json")
+        self._best_models_found = self._load_best_models_found()
+
+    def _load_best_models_found(self):
+        best_models_found = {}
+
+        folds = sorted(
+            [d for d in os.listdir(os.path.join(DATASETS_PATH, self._target_domain_name)) if d.startswith("fold")]
+        )
+
+        if os.path.exists(self._best_models_found_path):
+            with open(self._best_models_found_path, 'r') as f:
+                try:
+                    best_models_found = json.load(f)
+                except json.JSONDecodeError:
+                    pass
+
+            if self._target_domain_name in best_models_found:
+                return best_models_found
+
+        best_models_found.update({
+            self._target_domain_name: {fold: 0 for fold in folds}
+        })
+
+        with open(self._best_models_found_path, 'w') as f:
+            json.dump(best_models_found, f, indent=4)
+
+        return best_models_found
+
+    def _update_best_models_found(self, fold, best_model_was_found):
+        self._best_models_found[self._target_domain_name][fold] = 1 if best_model_was_found else -1
+
+        with open(self._best_models_found_path, 'w') as f:
+            json.dump(self._best_models_found, f, indent=4)
+
+    def _best_model_was_not_found(self, fold):
+        return self._best_models_found[self._target_domain_name][fold] == -1
 
     def select_mappings(self, number_of_mappings, source_domain_name=None):
         with open(self._mappings_path, "r", encoding="utf-8") as f:
             mappings = json.load(f)
 
-        self._selected_mappings = select_mappings(mappings, source_domain_name, number_of_mappings)
+        selected_mappings = select_mappings(mappings, source_domain_name, number_of_mappings)
+        self.reset(selected_mappings)
+
+    def set_mappings(self, selected_mappings):
+        self.reset(selected_mappings)
 
     def reset(self, selected_mappings):
         self._selected_mappings = selected_mappings
@@ -60,7 +101,7 @@ class TransferlearningManager:
         return mapped_data
 
     def _get_source_mapped_data(self, mapping):
-        source_domain = mapping["source_domain"]
+        source_domain = mapping["source"]
         source_domain_data_path = os.path.join(DATASETS_PATH, source_domain)
 
         return read_source_domain_and_apply_mapping(
@@ -70,6 +111,9 @@ class TransferlearningManager:
         )
 
     def get_knowledge_gap_data(self, fold_configuration):
+        if self._best_model_was_not_found(fold_configuration["train"][0]):
+            return None, None
+
         best_model = self._search_target_best_model(fold_configuration)
 
         if best_model is None:
@@ -112,8 +156,8 @@ class TransferlearningManager:
 
         model_settings = {"disable_limiters": True}
 
-        number_trees_list = [50]
-        max_tree_depth_list = [8]
+        number_trees_list = [10, 50, 100]
+        max_tree_depth_list = [3, 8]
 
         for number_trees in number_trees_list:
             model_settings["nEstimators"] = number_trees
@@ -141,9 +185,11 @@ class TransferlearningManager:
                     print("Model found!")
                     print(number_trees)
                     print(max_tree_depth)
+                    self._update_best_models_found(fold_configuration['train'][0], True)
                     return model
                 model.delete()
 
+        self._update_best_models_found(fold_configuration['train'][0], False)
         return None
 
     def _get_transfer_dataset(self, knowledge_gap_data, knowledge_data):
@@ -156,7 +202,7 @@ class TransferlearningManager:
 
         total_pos = gap_pos_size + knowledge_pos_size
 
-        ratio = 0.2
+        ratio = 0.5
         negative_multiplier = 2  # 2 negativas para cada 1 positiva
 
         # 1. Calcula a necessidade da âncora (POSITIVOS) baseada no ratio de cobertura
@@ -178,7 +224,7 @@ class TransferlearningManager:
             valid_predicates = [
                 predicate for predicate in list(self._selected_mappings[mapping_key]["predicate_mappings"].values())
                 if predicate is not None
-            ] + [self._selected_mappings[mapping_key]["target_predicate"]]
+            ]
             # valid_predicates = list(source_domain_mapped_data["facts"].keys()) + list(source_domain_mapped_data["pos"].keys())
 
             if samples_added["pos"] == needed_pos and samples_added["neg"] == needed_neg:
