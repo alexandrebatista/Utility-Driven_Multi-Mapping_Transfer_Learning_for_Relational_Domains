@@ -52,8 +52,10 @@ class SelectorModel:
         ]
         return data
 
-    def train(self, domain_data):
-        domain_data = self._filter_predicates(domain_data)
+    def train(self, domain_data, filter_predicates=True):
+        if filter_predicates:
+            domain_data = self._filter_predicates(domain_data)
+
         database = raw_data_to_database(domain_data, self._target_domain_metadata)
 
         self._model.fit(database, ignoreSTDOUT=True)
