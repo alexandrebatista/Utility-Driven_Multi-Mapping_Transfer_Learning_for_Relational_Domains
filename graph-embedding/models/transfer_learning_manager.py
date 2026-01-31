@@ -333,7 +333,12 @@ class TransferlearningManager:
     def default_transfer_learning(self, rounds:int = 3):
         out = []
 
-        self._dataset.process_source_from_data(self._source_domains)
+        data = defaultdict(dict)
+        for mapping_key, mapped_data in self._source_domains.items():
+            source_domain_name = self._selected_mappings[mapping_key]["source"]
+            data[source_domain_name].update({mapping_key: mapped_data})
+
+        self._dataset.process_source_from_data(data)
 
         for fold_configuration in self._folds_split:
             train_database = self._dataset.generate_train_srldatabase(
