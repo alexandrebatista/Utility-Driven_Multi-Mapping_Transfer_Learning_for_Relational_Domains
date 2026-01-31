@@ -192,236 +192,239 @@ class TransferlearningManager:
         self._update_best_models_found(fold_configuration['train'][0], False)
         return None
 
-    import math
-    import random
-
-    def _get_transfer_dataset_2(self, knowledge_gap_data, knowledge_data):
+    def _get_transfer_dataset_2(self, fold_configuration):
         """
-        Realiza Transfer Learning baseada em instâncias.
-        Usa um modelo RDN-Boost como ferramenta para identificar subgrafos no Source
-        que são estruturalmente similares ao Gap do Target.
+        Realiza Transfer Learning baseada em instâncias ("Instance-based Transfer").
+        Usa RDN-Boost com estratégia Top-K Score para selecionar subgrafos.
         """
 
         import random
         import math
+        import copy
+        from collections import defaultdict
 
         # =========================================================================
-        # 0. FUNÇÕES AUXILIARES INTERNAS
+        # 0. FUNÇÕES AUXILIARES
         # =========================================================================
 
         def extract_args(predicate_str):
-            """
-            Parser robusto.
-            Entrada: 'samevenue(src_paper_1, src_venue_A)'
-            Saída: ['src_paper_1', 'src_venue_A']
-            """
             try:
                 if "(" not in predicate_str: return []
-                content = predicate_str.split("(")[1].replace(")", "")
+                content = predicate_str.split("(")[1].replace(").", "").replace(")", "")
                 return [x.strip() for x in content.split(",")]
             except IndexError:
                 return []
 
-        def extract_entities_as_target(fact_list, predicate_name="is_gap"):
-            """
-            Transforma lista de relações em lista de alvos de entidade.
-            Ex: ['samevenue(a,b)'] -> ['is_gap(a)', 'is_gap(b)']
-            """
-            entities = set()
+        def extract_targets_by_position(fact_list, base_name="is_gap"):
+            targets_by_pos = defaultdict(list)
+            entities_by_pos = defaultdict(set)
             for fact in fact_list:
                 args = extract_args(fact)
-                for arg in args:
-                    entities.add(arg)
-            return [f"{predicate_name}({entity})" for entity in entities]
+                for i, arg in enumerate(args):
+                    entities_by_pos[i].add(arg)
+            for i, entities in entities_by_pos.items():
+                targets_by_pos[i] = [f"{base_name}_{i}({entity})." for entity in entities]
+            return targets_by_pos, entities_by_pos
 
-        def parse_entities_from_preds(pred_list):
-            """
-            Reverte a predição da ferramenta para IDs puros.
-            Entrada: ['is_gap(src_a)', 'is_gap(src_b)'] -> Saída: {'src_a', 'src_b'}
-            """
-            entities = set()
-            for pred in pred_list:
-                args = extract_args(pred)
-                if args:
-                    entities.add(args[0])
-            return entities
-
-        def filter_relations_by_entities(relation_list, selected_entities, strict=True):
-            """
-            Reconstrói as amostras relacionais originais (samevenue).
-            Strict=True: Só aceita se AMBOS os argumentos foram selecionados.
-            """
+        def filter_relations_strict(relation_list, approved_dict):
+            """Só aceita relação se args[i] estiver em approved_dict[i]"""
             selected_samples = []
-            selected_set = set(selected_entities)  # Set para busca O(1)
-
             for relation in relation_list:
                 args = extract_args(relation)
-                if len(args) < 2: continue
-
-                arg1, arg2 = args[0], args[1]
-
-                if strict:
-                    if arg1 in selected_set and arg2 in selected_set:
-                        selected_samples.append(relation)
-                else:
-                    if arg1 in selected_set or arg2 in selected_set:
-                        selected_samples.append(relation)
-
+                if not args: continue
+                is_fully_approved = True
+                for i, arg in enumerate(args):
+                    if i in approved_dict:
+                        if arg not in approved_dict[i]:
+                            is_fully_approved = False
+                            break
+                if is_fully_approved:
+                    selected_samples.append(relation)
             return selected_samples
 
+        def _inject_target_mode(metadata, new_predicate_name, pos_idx, ref_predicate_name):
+            new_metadata = copy.deepcopy(metadata)
+            ref_types = new_metadata.get('modes', {}).get(ref_predicate_name)
+            inferred_type = ref_types[pos_idx] if (ref_types and pos_idx < len(ref_types)) else "thing"
+
+            if 'modes' not in new_metadata: new_metadata['modes'] = {}
+            new_metadata['modes'][new_predicate_name] = [inferred_type]
+
+            if 'predicates' in new_metadata and new_predicate_name not in new_metadata['predicates']:
+                new_metadata['predicates'].append(new_predicate_name)
+
+            if 'raw_modes' in new_metadata:
+                new_metadata['raw_modes'].append(f"{new_predicate_name}(+{inferred_type}).")
+
+            new_metadata['target_predicate'] = new_predicate_name
+            return new_metadata
+
         # =========================================================================
-        # 1. CÁLCULO DE COTAS (RATIO 0.2 + REGRA 2:1)
+        # 1. CÁLCULO DE COTAS
         # =========================================================================
 
-        current_gap_pos = len(knowledge_gap_data["pos"])
-        current_know_pos = len(knowledge_data["pos"])
-        total_pos_current = current_gap_pos + current_know_pos
+        # current_gap_pos = len(knowledge_gap_data["pos"])
+        # current_know_pos = len(knowledge_data["pos"])
+        # total_pos_current = current_gap_pos + current_know_pos
+        # ratio = 0.5
+        #
+        # if total_pos_current > 0:
+        #     numerator = (ratio * total_pos_current) - current_gap_pos
+        #     denom = (1 - ratio)
+        #     needed_pos = math.ceil(numerator / denom) if denom != 0 else 0
+        #     needed_pos = max(0, needed_pos)
+        # else:
+        #     needed_pos = 10
 
-        ratio = 0.2
-
-        # Fórmula: x = (Ratio * Total - Gap) / (1 - Ratio)
-        if total_pos_current > 0:
-            numerator = (ratio * total_pos_current) - current_gap_pos
-            denom = (1 - ratio)
-            needed_pos = math.ceil(numerator / denom) if denom != 0 else 0
-            needed_pos = max(0, needed_pos)
-        else:
-            needed_pos = 10  # Fallback se dataset for vazio
+        needed_pos = 1000
 
         needed_neg = needed_pos * 2
+        total_needed = needed_pos + needed_neg
 
-        print(f"[Transfer] Meta: Buscar {needed_pos} Positivos e {needed_neg} Negativos no Source.")
+        knowledge_gap_data = {
+            **self._dataset.get_target_facts(fold_configuration["train"]),
+            **self._dataset.get_target_pos(fold_configuration["train"]),
+            **self._dataset.get_target_neg(fold_configuration["train"]),
+        }
+
+        print(f"\n=== TRANSFERÊNCIA INICIADA ===")
+        print(f"[Meta Global] Buscar {total_needed} entidades por posição (Ratio: {1}).")
 
         if needed_pos == 0:
-            return {"facts": [], "pos": [], "neg": []}
+            print("-> Meta atingida ou dataset vazio. Retornando vazio.")
+            return defaultdict(dict)
 
         # =========================================================================
-        # 2. ITERAÇÃO E EXECUÇÃO DA FERRAMENTA
+        # 2. EXECUÇÃO MULTI-MODELO
         # =========================================================================
 
-        final_transfer_facts = []
-        final_transfer_pos = []
-        final_transfer_neg = []
+        transfer_dataset = defaultdict(dict)
+        target_predicate_name = self._target_domain_metadata.get('target_predicate', 'samevenue')
 
-        # O Treino POSITIVO da ferramenta são sempre as entidades do GAP
-        # (Queremos aprender a estrutura delas)
+        # Acumuladores globais para o print final
+        grand_total_pos = 0
+        grand_total_neg = 0
+        grand_total_facts = 0
+
+        # Treino Positivo (Vem do GAP)
         gap_targets_raw = knowledge_gap_data["pos"] + knowledge_gap_data["neg"]
-        tool_train_pos = extract_entities_as_target(gap_targets_raw, "is_gap")
+        gap_targets_dict, _ = extract_targets_by_position(gap_targets_raw, "is_gap")
 
         for mapping_key, mapped_data in self._source_domains.items():
-            valid_predicates = [
-                predicate for predicate in list(self._selected_mappings[mapping_key]["predicate_mappings"].values())
-                if predicate is not None
-            ]
+            source_name = self._selected_mappings[mapping_key]["source"]
+            print(f"\n--- [Processando Origem: {source_name} | Mapping ID: {mapping_key}] ---")
 
-            # --- A. PREPARAÇÃO DO DATASET UNIFICADO ---
+            final_transfer_facts = []
+            final_transfer_pos = []
+            final_transfer_neg = []
 
-            # O Treino NEGATIVO da ferramenta é uma amostra do SOURCE
             source_targets_raw = mapped_data["pos"] + mapped_data["neg"]
-            all_source_entities = extract_entities_as_target(source_targets_raw, "is_gap")
+            source_targets_dict, _ = extract_targets_by_position(source_targets_raw, "is_gap")
 
-            # Undersampling para treino rápido do discriminador
-            tool_train_neg = random.sample(
-                all_source_entities,
-                min(len(all_source_entities), len(tool_train_pos) * 2)
-            )
+            active_positions = set(gap_targets_dict.keys())
+            approved_by_pos = {}
 
-            filtered_gap_data_facts = [fact for fact in knowledge_gap_data["facts"] if fact.split('(', 1)[0] in valid_predicates]
+            for pos_idx in active_positions:
+                # 2.1 Preparação
+                tool_train_pos = gap_targets_dict.get(pos_idx, [])
+                all_source_targets = source_targets_dict.get(pos_idx, [])
+                if not tool_train_pos or not all_source_targets: continue
 
-            # Fatos Unificados: O RDN precisa ver Source e Gap juntos
-            all_facts = (
-                    filtered_gap_data_facts +
-                    knowledge_gap_data["pos"] +  # Alvos originais viram fatos de contexto
-                    knowledge_gap_data["neg"] +
-                    mapped_data["facts"] +
-                    mapped_data["pos"] +
-                    mapped_data["neg"]
-            )
+                # Undersampling para treino
+                tool_train_neg = random.sample(all_source_targets,
+                                               min(len(all_source_targets), len(tool_train_pos) * 2))
 
-            unified_dataset = {
-                "facts": all_facts,
-                "pos": tool_train_pos,
-                "neg": tool_train_neg
-            }
+                valid_predicates = [v for v in self._selected_mappings[mapping_key]["predicate_mappings"].values() if v]
+                filtered_gap_facts = [f for f in knowledge_gap_data["facts"] if f.split('(', 1)[0] in valid_predicates]
 
-            # --- B. TREINO E TESTE DO DISCRIMINADOR ---
+                all_facts_train = (filtered_gap_facts + knowledge_gap_data["pos"] + knowledge_gap_data["neg"] +
+                                   mapped_data["facts"] + mapped_data["pos"] + mapped_data["neg"])
 
-            selector_model = SelectorModel(
-                valid_predicates=valid_predicates,
-                target=self._target_domain_name,
-                target_domain_metadata=self._target_domain_metadata,
-                prefix_path=self._base_path
-            )
+                unified_dataset = {"facts": all_facts_train, "pos": tool_train_pos, "neg": tool_train_neg}
 
-            # Treina para distinguir Gap vs Source
-            selector_model.train(unified_dataset, filter_predicates=False)
+                # 2.2 Treino
+                current_target = f"is_gap_{pos_idx}"
+                augmented_metadata = _inject_target_mode(self._target_domain_metadata, current_target, pos_idx,
+                                                         target_predicate_name)
 
-            # Prepara teste: Queremos avaliar TODO o source
-            # Injetamos as queries 'is_gap(X)' para todas as entidades source
-            mapped_data_for_test = mapped_data.copy()
+                selector_model = SelectorModel(
+                    valid_predicates=valid_predicates,
+                    target=current_target,
+                    target_domain_metadata=augmented_metadata,
+                    prefix_path=self._base_path
+                )
+                selector_model.train(unified_dataset, filter_predicates=False)
 
-            # Nota: O 'test' do SelectorModel deve usar as queries implícitas ou as que passarmos.
-            # Aqui assumimos que ele vai testar contra o que estiver definido no mapped_data
-            # (que contem pos/neg originais).
-            # Para garantir, poderíamos injetar 'pos': all_source_entities se o método test usar a chave 'pos'.
-            selector_model.test(mapped_data_for_test)
+                # 2.3 Teste (Gera estimativas)
+                test_facts = mapped_data["facts"] + mapped_data["pos"] + mapped_data["neg"]
+                mapped_data_for_test = {"facts": test_facts, "pos": all_source_targets, "neg": []}
+                selector_model.test(mapped_data_for_test)
 
-            # --- C. SELEÇÃO E CORTES (SELECTION) ---
+                # --- 2.4 SELEÇÃO VIA LOAD_ESTIMATES (Top-K) ---
+                raw_estimates = selector_model.load_estimates()
 
-            # Recebe listas ['is_gap(src_a)', ...] que passaram no threshold (ex: > 0.5)
-            # O modelo retorna separado quem era originalmente Pos ou Neg no source
-            preds_pos_raw, preds_neg_raw = selector_model.get_best_samples()
+                candidates_with_score = []
+                for est in raw_estimates:
+                    if est.get('predicate') == current_target:
+                        entity = est['args'][0]
+                        score = est['score']
+                        candidates_with_score.append((entity, score))
 
-            # Extrai IDs limpos
-            candidates_pos = parse_entities_from_preds(preds_pos_raw)
-            candidates_neg = parse_entities_from_preds(preds_neg_raw)
+                # Ordenação e Top-K
+                candidates_with_score.sort(key=lambda x: x[1], reverse=True)
+                top_k_candidates = candidates_with_score[:total_needed]
 
-            # Aplica as COTAS (Se vier mais que o necessário, fazemos downsample)
-            # Se vier menos (score baixo), pegamos o que tem.
+                approved_entities = set([x[0] for x in top_k_candidates])
+                approved_by_pos[pos_idx] = approved_entities
 
-            selected_pos_entities = set()
-            if len(candidates_pos) > 0:
-                k = min(len(candidates_pos), needed_pos)
-                selected_pos_entities = set(random.sample(list(candidates_pos), k))
+                # Print de diagnóstico do modelo
+                top_score = candidates_with_score[0][1] if candidates_with_score else 0.0
+                print(
+                    f"   > Argumento {pos_idx}: {len(approved_entities)} entidades selecionadas (Max Score: {top_score:.4f})")
 
-            selected_neg_entities = set()
-            if len(candidates_neg) > 0:
-                k = min(len(candidates_neg), needed_neg)
-                selected_neg_entities = set(random.sample(list(candidates_neg), k))
-
-            all_approved_entities = selected_pos_entities.union(selected_neg_entities)
-
-            print(
-                f"[Domain {mapping_key}] Selecionados {len(selected_pos_entities)} Pos, {len(selected_neg_entities)} Neg.")
-
-            # --- D. FILTRAGEM DE RELAÇÕES E FATOS (TRANSFER) ---
-
-            # 1. Recupera as relações samevenue(a,b)
-            batch_pos = filter_relations_by_entities(mapped_data["pos"], all_approved_entities, strict=True)
-            batch_neg = filter_relations_by_entities(mapped_data["neg"], all_approved_entities, strict=True)
-
+            # 3. Filtragem Final
+            batch_pos = filter_relations_strict(mapped_data["pos"], approved_by_pos)
+            batch_neg = filter_relations_strict(mapped_data["neg"], approved_by_pos)
             final_transfer_pos.extend(batch_pos)
             final_transfer_neg.extend(batch_neg)
 
-            # 2. Recupera fatos de contexto (author, keyword, etc)
-            # Trazemos fatos se eles mencionarem QUALQUER entidade aprovada
+            # Fatos
+            all_approved_flat = set()
+            for s in approved_by_pos.values(): all_approved_flat.update(s)
+
             source_facts = mapped_data["facts"]
             batch_facts = []
             for fact in source_facts:
                 args = extract_args(fact)
-                if any(arg in all_approved_entities for arg in args):
+                if any(arg in all_approved_flat for arg in args):
                     batch_facts.append(fact)
-
             final_transfer_facts.extend(batch_facts)
 
-        print(
-            f"[Final] Transferindo: {len(final_transfer_pos)} Pos, {len(final_transfer_neg)} Neg, {len(final_transfer_facts)} Fatos.")
+            # Salva no dicionário de retorno
+            transfer_dataset[source_name][mapping_key] = \
+                {"facts": final_transfer_facts, "pos": final_transfer_pos, "neg": final_transfer_neg}
 
-        return {
-            "facts": final_transfer_facts,
-            "pos": final_transfer_pos,
-            "neg": final_transfer_neg
-        }
+            # Acumula totais globais
+            grand_total_pos += len(final_transfer_pos)
+            grand_total_neg += len(final_transfer_neg)
+            grand_total_facts += len(final_transfer_facts)
+
+            # Print Resumo do Mapping atual
+            print(f"   >>> Resultado Parcial ({source_name}):")
+            print(f"       + {len(final_transfer_pos)} Amostras Positivas")
+            print(f"       + {len(final_transfer_neg)} Amostras Negativas")
+            print(f"       + {len(final_transfer_facts)} Fatos de Contexto")
+
+        # Print Resumo Geral
+        print(f"\n=== RESUMO FINAL DA TRANSFERÊNCIA ===")
+        print(f"Total de Origens Processadas: {len(transfer_dataset)}")
+        print(f"Total Geral Transferido:")
+        print(f"  > Positivos: {grand_total_pos}")
+        print(f"  > Negativos: {grand_total_neg}")
+        print(f"  > Fatos:     {grand_total_facts}")
+        print(f"=====================================\n")
+
+        return transfer_dataset
 
     def _get_transfer_dataset(self, knowledge_gap_data, knowledge_data):
         import math
@@ -622,28 +625,29 @@ class TransferlearningManager:
 
                 if fold_configuration["train"][0] not in tl_not_possible:
                     # Search for a deficiency in the dataset
-                    knowledge_gap_data, knowledge_data = self.get_knowledge_gap_data(
-                        fold_configuration=fold_configuration,
-                    )
+                    # knowledge_gap_data, knowledge_data = self.get_knowledge_gap_data(
+                    #     fold_configuration=fold_configuration,
+                    # )
 
                     # Get transfer dataset
-                    if knowledge_gap_data is not None:
-                        transfer_learning_raw_dataset = self._get_transfer_dataset(
-                            knowledge_gap_data=knowledge_gap_data,
-                            knowledge_data=knowledge_data
-                        )
+                    #if knowledge_gap_data is not None:
+                    transfer_learning_raw_dataset = self._get_transfer_dataset_2(
+                        #knowledge_gap_data=knowledge_gap_data,
+                        #knowledge_data=knowledge_data,
+                        fold_configuration=fold_configuration
+                    )
 
-                        if transfer_learning_raw_dataset is not None:
-                            result["transfer_learning"] = True
-                            self._dataset.process_source_from_data(transfer_learning_raw_dataset)
+                    if transfer_learning_raw_dataset:
+                        result["transfer_learning"] = True
+                        self._dataset.process_source_from_data(transfer_learning_raw_dataset)
 
-                        else:
-                            tl_not_possible.append(fold_configuration["train"][0])
-                            result["log"] += "Transfer-learning dataset could not be generated."
                     else:
-                        # Transfer learning is not suitable.
                         tl_not_possible.append(fold_configuration["train"][0])
-                        result["log"] += "Best model not found."
+                        result["log"] += "Transfer-learning dataset could not be generated."
+                    # else:
+                    #     # Transfer learning is not suitable.
+                    #     tl_not_possible.append(fold_configuration["train"][0])
+                    #     result["log"] += "Best model not found."
 
                 tl_train_metrics, tl_test_metrics = self._kg_training_workflow(
                     fold_configuration=fold_configuration
@@ -693,8 +697,8 @@ class TransferlearningManager:
             "mappings": list(self._selected_mappings.values())
         }
 
-        default_tl_out = self.default_transfer_learning()
         kg_tl_out = self.kg_transfer_learning()
+        default_tl_out = self.default_transfer_learning()
 
         results["default_transfer_learning_results"] = default_tl_out
         results["kg_transfer_learning_results"] = kg_tl_out
