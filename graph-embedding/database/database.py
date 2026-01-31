@@ -147,6 +147,18 @@ class DatabaseWrapper:
             facts.extend(self._data["target"][fold]["facts"])
         return {"facts": facts}
 
+    def get_target_pos(self, folds):
+        pos = []
+        for fold in folds:
+            pos.extend(self._data["target"][fold]["pos"])
+        return {"pos": pos}
+
+    def get_target_neg(self, folds):
+        neg = []
+        for fold in folds:
+            neg.extend(self._data["target"][fold]["neg"])
+        return {"neg": neg}
+
     def generate_fold_splits(self, small_dataset=True):
         return generate_folds(self._target_domain_path, small_dataset)
 
