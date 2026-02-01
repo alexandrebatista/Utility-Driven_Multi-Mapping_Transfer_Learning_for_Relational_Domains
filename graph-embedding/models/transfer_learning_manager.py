@@ -337,8 +337,12 @@ class TransferlearningManager:
                 valid_predicates = [v for v in self._selected_mappings[mapping_key]["predicate_mappings"].values() if v]
                 filtered_gap_facts = [f for f in knowledge_gap_data["facts"] if f.split('(', 1)[0] in valid_predicates]
 
-                all_facts_train = (filtered_gap_facts + knowledge_gap_data["pos"] + knowledge_gap_data["neg"] +
-                                   mapped_data["facts"] + mapped_data["pos"] + mapped_data["neg"])
+                all_facts_train = (
+                        filtered_gap_facts +
+                        knowledge_gap_data["pos"] +
+                        mapped_data["facts"] +
+                        mapped_data["pos"]
+                )
 
                 unified_dataset = {"facts": all_facts_train, "pos": tool_train_pos, "neg": tool_train_neg}
 
@@ -356,7 +360,7 @@ class TransferlearningManager:
                 selector_model.train(unified_dataset, filter_predicates=False)
 
                 # 2.3 Teste (Gera estimativas)
-                test_facts = mapped_data["facts"] + mapped_data["pos"] + mapped_data["neg"]
+                test_facts = mapped_data["facts"] + mapped_data["pos"]
                 mapped_data_for_test = {"facts": test_facts, "pos": all_source_targets, "neg": []}
                 selector_model.test(mapped_data_for_test)
 
@@ -612,7 +616,7 @@ class TransferlearningManager:
 
         return out
 
-    def kg_transfer_learning(self, rounds: int = 3):
+    def kg_transfer_learning(self, rounds: int = 1):
         out = []
         tl_not_possible = []
 
@@ -698,9 +702,9 @@ class TransferlearningManager:
         }
 
         kg_tl_out = self.kg_transfer_learning()
-        default_tl_out = self.default_transfer_learning()
+        #default_tl_out = self.default_transfer_learning()
 
-        results["default_transfer_learning_results"] = default_tl_out
+        #results["default_transfer_learning_results"] = default_tl_out
         results["kg_transfer_learning_results"] = kg_tl_out
         
         # Salva os resultados em arquivo JSON
