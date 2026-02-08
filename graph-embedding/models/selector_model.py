@@ -1,4 +1,5 @@
 import os
+import pickle
 
 from srlearn.rdn import RDNBoost
 
@@ -18,7 +19,7 @@ class SelectorModel:
 
         self._target_domain_metadata = target_domain_metadata
 
-        self._pkl_path = os.path.join(prefix_path, f"selector_models/pkl/{target}/")
+        self._pkl_path = os.path.join(prefix_path, f"selector_models/pkl/{target}/{self._name}.pkl")
         self._rdn_boost_path = os.path.join(prefix_path, f"selector_models/rdn-boost/{target}/{self._name}")
         self._train_output_path = os.path.join(self._rdn_boost_path, "bsrl_data/data0", "train_output.txt")
         self._test_output_path = os.path.join(self._rdn_boost_path, "bsrl_data/data0", "test_output.txt")
@@ -185,19 +186,24 @@ class SelectorModel:
         """
         import pickle
 
+        # ensure containing directory exists
+        os.makedirs(os.path.dirname(self._pkl_path), exist_ok=True)
+
         with open(self._pkl_path, 'wb') as file:
             pickle.dump(self, file)
 
     def delete(self):
-        import shutil
+        import os
 
-        if os.path.exists(self._pkl_path) and os.path.isdir(self._pkl_path):
-            shutil.rmtree(self._pkl_path)
-            print(f"Folder '{self._pkl_path}' deleted successfully.")
+        # remove only the pickle file
+        if os.path.exists(self._pkl_path) and os.path.isfile(self._pkl_path):
+            os.remove(self._pkl_path)
+            print(f"File '{self._pkl_path}' deleted successfully.")
         else:
-            print(f"Folder '{self._pkl_path}' does not exist.")
+            print(f"File '{self._pkl_path}' does not exist.")
 
         if os.path.exists(self._rdn_boost_path) and os.path.isdir(self._rdn_boost_path):
+            import shutil
             shutil.rmtree(self._rdn_boost_path)
             print(f"Folder '{self._rdn_boost_path}' deleted successfully.")
         else:
@@ -231,6 +237,17 @@ class SelectorModel:
         with open(metadata_path, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=4)
 
+    @staticmethod
+    def load_selector_model(base_path, target_domain_name, valid_predicates):
+        expected_pkl_dir = os.path.join(base_path, f"selector_models/pkl/{target_domain_name}/")
+        expected_pkl_file = os.path.join(expected_pkl_dir, f"{set_to_uuid(valid_predicates)}.pkl")
+        if os.path.exists(expected_pkl_file):
+            with open(expected_pkl_file, 'rb') as f:
+                selector_model = pickle.load(f)
+            return selector_model
+        return None
+
+
 def get_transfer_dataset(base_path: str, source_domain_mapped_data, target_domain_name: str, target_domain_metadata, knowledge_gap_data):
     valid_predicates = list(source_domain_mapped_data["facts"].keys()) + list(source_domain_mapped_data["pos"].keys())
 
@@ -254,3 +271,49 @@ def get_transfer_dataset(base_path: str, source_domain_mapped_data, target_domai
     selector_model.delete()
 
     return raw_transfer_dataset
+
+def generate_selector_model(
+        base_path: str,
+        valid_predicates: list,
+        target_domain_name: str,
+        target_domain_metadata: dict,
+        dataset,
+        save=True
+):
+    # try to load an existing selector model built for these predicates
+    selector_model = SelectorModel.load_selector_model(base_path, target_domain_name, valid_predicates)
+    if selector_model is not None:
+        return selector_model
+
+    number_trees_list = [10, 50, 100]
+    max_tree_depth_list = [3, 5, 8]
+
+    for number_trees in number_trees_list:
+        for max_tree_depth in max_tree_depth_list:
+            model_settings = {
+                "disable_limiters": True,
+                "nEstimators": number_trees,
+                "maxTreeDepth": max_tree_depth,
+            }
+
+            selector_model = SelectorModel(
+                valid_predicates=valid_predicates,
+                model_settings=model_settings,
+                prefix_path=base_path,
+                target=target_domain_name,
+                target_domain_metadata=target_domain_metadata,
+            )
+
+            selector_model.train(dataset)
+
+            if selector_model.is_reliable(threshold=0.5):
+                if save:
+                    selector_model.save()
+                print("Model found! Number of trees: " + str(number_trees) + ". Max tree depth: " + str(max_tree_depth))
+
+                return selector_model
+
+            print("Model not found! Number of trees: " + str(number_trees) + ". Max tree depth: " + str(max_tree_depth))
+            selector_model.delete()
+
+    return None
