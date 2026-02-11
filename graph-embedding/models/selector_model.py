@@ -93,8 +93,8 @@ class SelectorModel:
 
     def get_best_samples(self, threshold=0.5):
         def split_by_label(data):
-            pos = [d for d in data if not d["raw"].startswith("!")]
-            neg = [d for d in data if d["raw"].startswith("!")]
+            pos = [d for d in data if not d["negative"]]
+            neg = [d for d in data if d["negative"]]
             return pos, neg
 
         estimates = self.load_estimates()
@@ -141,9 +141,10 @@ class SelectorModel:
                     continue
 
                 estimates.append({
-                    "predicate": predicate,
+                    "predicate": predicate[1:],
                     "args": args,
-                    "raw": f"{predicate}({','.join(args)})",
+                    "negative": predicate[0] == "!",
+                    "raw": f"{predicate[1:] if predicate[0] == '!' else predicate}({','.join(args)}).",
                     "score": score
                 })
 
@@ -159,7 +160,7 @@ class SelectorModel:
         scores = self.load_estimates()
 
         # Extract labels and scores as NumPy arrays
-        y_true = np.array([0 if s["raw"].startswith("!") else 1 for s in scores])
+        y_true = np.array([0 if s["negative"] else 1 for s in scores])
         score_arr = np.array([s["score"] for s in scores])
 
         # Predicted = correct if score > threshold, else inverted
@@ -286,7 +287,7 @@ def generate_selector_model(
         return selector_model
 
     number_trees_list = [10, 50, 100]
-    max_tree_depth_list = [3, 5, 8]
+    max_tree_depth_list = [3, 5, 8, 10]
 
     for number_trees in number_trees_list:
         for max_tree_depth in max_tree_depth_list:

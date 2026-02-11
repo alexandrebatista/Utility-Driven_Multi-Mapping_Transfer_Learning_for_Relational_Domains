@@ -35,8 +35,3 @@ for target_domain_name in target_domains:
         for mapping_key, mapping in selected_mappings.items():
             tl_manager.set_mappings({mapping_key: mapping})
             tl_manager.perform_transfer_learning()
-
-
-
-
-

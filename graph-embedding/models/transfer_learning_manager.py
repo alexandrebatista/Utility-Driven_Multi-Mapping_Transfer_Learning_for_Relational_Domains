@@ -423,32 +423,9 @@ class TransferlearningManager:
             "neg": final_transfer_neg
         }
 
-    def _get_transfer_dataset(self, knowledge_gap_data, knowledge_data):
-        import math
-
+    def _get_transfer_dataset(self, knowledge_gap_data, knowledge_data, fold_configuration):
         transfer_dataset = defaultdict(dict)
-
-        gap_pos_size = len(knowledge_gap_data["pos"])
-        knowledge_pos_size = len(knowledge_data["pos"])
-
-        total_pos = gap_pos_size + knowledge_pos_size
-
-        ratio = 0.5
-        negative_multiplier = 2  # 2 negativas para cada 1 positiva
-
-        # 1. Calcula a necessidade da âncora (POSITIVOS) baseada no ratio de cobertura
-        # Mantemos a fórmula original aqui para definir o "volume" de dados necessários
-        needed_pos = (ratio * total_pos - gap_pos_size) / (1 - ratio)
-        needed_pos = max(0, math.ceil(needed_pos))
-
-        # 2. Calcula as negativas baseadas EXCLUSIVAMENTE na quantidade de positivas
-        # Ignoramos o 'ratio' original para as negativas e obedecemos a regra 2:1
-        needed_neg = needed_pos * negative_multiplier
-
-        samples_added = {
-            "pos": 0,
-            "neg": 0
-        }
+        approach = 0
 
         for mapping_key, mapped_data in self._source_domains.items():
             source_domain_name = self._selected_mappings[mapping_key]["source"]
@@ -457,11 +434,13 @@ class TransferlearningManager:
                 if predicate is not None
             ]
 
-            if samples_added["pos"] == needed_pos and samples_added["neg"] == needed_neg:
-                break
+            raw_transfer_dataset = {
+                "facts": mapped_data["facts"],
+                "pos": mapped_data["pos"],
+                "neg": mapped_data["neg"]
+            }
 
-            approach_1_failed = False
-            if knowledge_gap_data is not None:
+            if knowledge_gap_data:
                 selector_model = generate_selector_model(
                     base_path=self._base_path,
                     valid_predicates=valid_predicates,
@@ -476,27 +455,17 @@ class TransferlearningManager:
 
                     pos_transfer_samples, neg_transfer_samples = selector_model.get_best_samples()
 
-                    number_pos_samples_to_add = needed_pos - samples_added["pos"]
-                    number_neg_samples_to_add = needed_neg - samples_added["neg"]
-
-                    samples_added["pos"] += len(pos_transfer_samples[:number_pos_samples_to_add])
-                    samples_added["neg"] += len(neg_transfer_samples[:number_neg_samples_to_add])
-
                     raw_transfer_dataset = {
                         "facts": mapped_data["facts"],
-                        "pos": [f"{sample['raw']}." for sample in pos_transfer_samples[:number_pos_samples_to_add]],
-                        "neg": [f"{sample['raw'][1:]}." for sample in neg_transfer_samples[:number_neg_samples_to_add]]
+                        "pos": [sample["raw"] for sample in pos_transfer_samples],
+                        "neg": [sample["raw"] for sample in neg_transfer_samples]
                     }
 
                     transfer_dataset[source_domain_name][mapping_key] = raw_transfer_dataset
-                else:
-                    approach_1_failed = True
 
-                selector_model.delete()
-            else:
-                approach_1_failed = True
+                    approach = 1
 
-            if approach_1_failed:
+            if not approach:
                 selector_model = SelectorModel(
                     valid_predicates=valid_predicates,
                     target=self._target_domain_name,
@@ -507,30 +476,90 @@ class TransferlearningManager:
                 # Learn the patterns in the mapped data
                 selector_model.train(mapped_data)
 
-                if selector_model.is_reliable():
+                if selector_model.is_reliable() and knowledge_gap_data:
                     pos_transfer_samples, neg_transfer_samples = selector_model.get_best_samples()
 
-                    # Look for source domain samples whose patterns match knowledge gap ones.
-                    selector_model.test(knowledge_gap_data)
+                    if knowledge_gap_data is not None:
+                        # Look for source domain samples whose patterns match knowledge gap ones.
+                        selector_model.test(knowledge_gap_data)
 
-                    if selector_model.is_reliable():
-                        number_pos_samples_to_add = needed_pos - samples_added["pos"]
-                        number_neg_samples_to_add = needed_neg - samples_added["neg"]
+                        if selector_model.is_reliable():
+                            raw_transfer_dataset = {
+                                "facts": mapped_data["facts"],
+                                "pos": [sample["raw"] for sample in pos_transfer_samples],
+                                "neg": [sample["raw"] for sample in neg_transfer_samples]
+                            }
 
-                        samples_added["pos"] += len(pos_transfer_samples[:number_pos_samples_to_add])
-                        samples_added["neg"] += len(neg_transfer_samples[:number_neg_samples_to_add])
+                            approach = 2
+                    else:
+                        selector_model.test(knowledge_data)
 
-                        raw_transfer_dataset = {
-                            "facts": mapped_data["facts"],
-                            "pos": [f"{sample['raw']}." for sample in pos_transfer_samples[:number_pos_samples_to_add]],
-                            "neg": [f"{sample['raw'][1:]}." for sample in neg_transfer_samples[:number_neg_samples_to_add]]
-                        }
-
-                        transfer_dataset[source_domain_name][mapping_key] = raw_transfer_dataset
+                        if selector_model.is_reliable():
+                            raw_transfer_dataset = {
+                                "facts": mapped_data["facts"],
+                                "pos": [sample["raw"] for sample in pos_transfer_samples],
+                                "neg": [sample["raw"] for sample in neg_transfer_samples]
+                            }
+                            approach = 3
 
                 selector_model.delete()
 
-        return transfer_dataset
+            if not approach:
+                selector_model = SelectorModel(
+                    valid_predicates=valid_predicates,
+                    target=self._target_domain_name,
+                    target_domain_metadata=self._target_domain_metadata,
+                    prefix_path=self._base_path
+                )
+
+                target_data = {
+                    **self._dataset.get_target_facts(fold_configuration["train"]),
+                    **self._dataset.get_target_pos(fold_configuration["train"]),
+                    **self._dataset.get_target_neg(fold_configuration["train"])
+                }
+
+                selector_model.train(target_data)
+
+                target_train_metrics = selector_model.get_train_metrics()
+
+                selector_model.delete()
+
+                selector_model = SelectorModel(
+                    valid_predicates=valid_predicates,
+                    target=self._target_domain_name,
+                    target_domain_metadata=self._target_domain_metadata,
+                    prefix_path=self._base_path
+                )
+
+                unified_data = {
+                    "facts": target_data["facts"] + mapped_data["facts"],
+                    "pos": target_data["pos"] + mapped_data["pos"],
+                    "neg": target_data["neg"] + mapped_data["neg"]
+                }
+
+                selector_model.train(unified_data)
+                selector_model.test(target_data)
+
+                unified_data_train_metrics = selector_model.get_test_metrics()
+
+                if unified_data_train_metrics["auc_roc"] > target_train_metrics["auc_roc"] and unified_data_train_metrics["auc_pr"] > target_train_metrics["auc_pr"] :
+                    selector_model.test(mapped_data)
+                    best_pos, best_neg = selector_model.get_best_samples()
+                    raw_transfer_dataset = {
+                        "facts": mapped_data["facts"],
+                        "pos": [sample["raw"] for sample in best_pos],
+                        "neg": [sample["raw"] for sample in best_neg]
+                    }
+                    approach = 4
+
+                selector_model.delete()
+
+            if not approach:
+                approach = 5
+
+            transfer_dataset[source_domain_name][mapping_key] = raw_transfer_dataset
+
+        return transfer_dataset, approach
 
     def _kg_training_workflow(self, fold_configuration):
         transfer_learning_train_dataset = self._dataset.generate_train_srldatabase(
@@ -625,23 +654,20 @@ class TransferlearningManager:
                     )
 
                     # Get transfer dataset
-                    if knowledge_gap_data is not None:
-                        transfer_learning_raw_dataset = self._get_transfer_dataset(
-                            knowledge_gap_data=knowledge_gap_data,
-                            knowledge_data=knowledge_data
-                        )
+                    transfer_learning_raw_dataset, approach = self._get_transfer_dataset(
+                        knowledge_gap_data=knowledge_gap_data,
+                        knowledge_data=knowledge_data,
+                        fold_configuration=fold_configuration
+                    )
 
-                        if transfer_learning_raw_dataset is not None:
-                            result["transfer_learning"] = True
-                            self._dataset.process_source_from_data(transfer_learning_raw_dataset)
+                    if transfer_learning_raw_dataset is not None:
+                        result["transfer_learning"] = True
+                        result["transfer_learning_strategy"] = f"Approach {str(approach)}"
+                        self._dataset.process_source_from_data(transfer_learning_raw_dataset)
 
-                        else:
-                            tl_not_possible.append(fold_configuration["train"][0])
-                            result["log"] += "Transfer-learning dataset could not be generated."
                     else:
-                        # Transfer learning is not suitable.
                         tl_not_possible.append(fold_configuration["train"][0])
-                        result["log"] += "Best model not found."
+                        result["log"] += "Transfer-learning dataset could not be generated."
 
                 tl_train_metrics, tl_test_metrics = self._kg_training_workflow(
                     fold_configuration=fold_configuration
@@ -691,8 +717,8 @@ class TransferlearningManager:
             "mappings": list(self._selected_mappings.values())
         }
 
-        default_tl_out = self.default_transfer_learning()
         kg_tl_out = self.kg_transfer_learning()
+        default_tl_out = self.default_transfer_learning()
 
         results["default_transfer_learning_results"] = default_tl_out
         results["kg_transfer_learning_results"] = kg_tl_out
