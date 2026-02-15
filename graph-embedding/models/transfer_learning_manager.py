@@ -423,9 +423,15 @@ class TransferlearningManager:
             "neg": final_transfer_neg
         }
 
-    def _get_transfer_dataset(self, knowledge_gap_data, knowledge_data, fold_configuration):
+    def _get_transfer_dataset(self, fold_configuration):
         transfer_dataset = defaultdict(dict)
         approach = 0
+
+        target_data = {
+            **self._dataset.get_target_facts(fold_configuration["train"]),
+            **self._dataset.get_target_pos(fold_configuration["train"]),
+            **self._dataset.get_target_neg(fold_configuration["train"])
+        }
 
         for mapping_key, mapped_data in self._source_domains.items():
             source_domain_name = self._selected_mappings[mapping_key]["source"]
@@ -440,31 +446,6 @@ class TransferlearningManager:
                 "neg": mapped_data["neg"]
             }
 
-            if knowledge_gap_data:
-                selector_model = generate_selector_model(
-                    base_path=self._base_path,
-                    valid_predicates=valid_predicates,
-                    dataset=knowledge_gap_data,
-                    target_domain_name=self._target_domain_name,
-                    target_domain_metadata=self._target_domain_metadata,
-                )
-
-                if selector_model:
-                    # Look for source domain samples whose patterns match knowledge gap ones.
-                    selector_model.test(mapped_data)
-
-                    pos_transfer_samples, neg_transfer_samples = selector_model.get_best_samples()
-
-                    raw_transfer_dataset = {
-                        "facts": mapped_data["facts"],
-                        "pos": [sample["raw"] for sample in pos_transfer_samples],
-                        "neg": [sample["raw"] for sample in neg_transfer_samples]
-                    }
-
-                    transfer_dataset[source_domain_name][mapping_key] = raw_transfer_dataset
-
-                    approach = 1
-
             if not approach:
                 selector_model = SelectorModel(
                     valid_predicates=valid_predicates,
@@ -472,51 +453,6 @@ class TransferlearningManager:
                     target_domain_metadata=self._target_domain_metadata,
                     prefix_path=self._base_path
                 )
-
-                # Learn the patterns in the mapped data
-                selector_model.train(mapped_data)
-
-                if selector_model.is_reliable() and knowledge_gap_data:
-                    pos_transfer_samples, neg_transfer_samples = selector_model.get_best_samples()
-
-                    if knowledge_gap_data is not None:
-                        # Look for source domain samples whose patterns match knowledge gap ones.
-                        selector_model.test(knowledge_gap_data)
-
-                        if selector_model.is_reliable():
-                            raw_transfer_dataset = {
-                                "facts": mapped_data["facts"],
-                                "pos": [sample["raw"] for sample in pos_transfer_samples],
-                                "neg": [sample["raw"] for sample in neg_transfer_samples]
-                            }
-
-                            approach = 2
-                    else:
-                        selector_model.test(knowledge_data)
-
-                        if selector_model.is_reliable():
-                            raw_transfer_dataset = {
-                                "facts": mapped_data["facts"],
-                                "pos": [sample["raw"] for sample in pos_transfer_samples],
-                                "neg": [sample["raw"] for sample in neg_transfer_samples]
-                            }
-                            approach = 3
-
-                selector_model.delete()
-
-            if not approach:
-                selector_model = SelectorModel(
-                    valid_predicates=valid_predicates,
-                    target=self._target_domain_name,
-                    target_domain_metadata=self._target_domain_metadata,
-                    prefix_path=self._base_path
-                )
-
-                target_data = {
-                    **self._dataset.get_target_facts(fold_configuration["train"]),
-                    **self._dataset.get_target_pos(fold_configuration["train"]),
-                    **self._dataset.get_target_neg(fold_configuration["train"])
-                }
 
                 selector_model.train(target_data)
 
@@ -648,15 +584,8 @@ class TransferlearningManager:
                 # Generate dataset with misclassified by the model
 
                 if fold_configuration["train"][0] not in tl_not_possible:
-                    # Search for a deficiency in the dataset
-                    knowledge_gap_data, knowledge_data = self.get_knowledge_gap_data(
-                        fold_configuration=fold_configuration,
-                    )
-
                     # Get transfer dataset
                     transfer_learning_raw_dataset, approach = self._get_transfer_dataset(
-                        knowledge_gap_data=knowledge_gap_data,
-                        knowledge_data=knowledge_data,
                         fold_configuration=fold_configuration
                     )
 
