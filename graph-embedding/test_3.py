@@ -6,7 +6,7 @@ from database.utils import get_dataset_names
 from mapping.utils import select_mappings
 
 
-base_path = "./tl_experiments_2"
+base_path = "./tl_experiments_3"
 
 domains = get_dataset_names("./preprocessed")
 targets = ["cora", "nell_finances", "yeast"]
@@ -29,8 +29,11 @@ for target_domain_name in target_domains:
         selected_mappings = select_mappings(
             mappings_dict=mappings,
             source_domain=source_domain_name,
-            number_of_mappings_to_select=5
+            number_of_mappings_to_select=3
         )
+
+        tl_manager.set_mappings(selected_mappings)
+        tl_manager.perform_transfer_learning()
 
         for mapping_key, mapping in selected_mappings.items():
             tl_manager.set_mappings({mapping_key: mapping})
