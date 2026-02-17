@@ -91,16 +91,37 @@ class SelectorModel:
             "train_metrics": self._train_metrics
         }
 
-    def get_best_samples(self, threshold=0.5):
+    def get_best_samples(self, n_pos: int, n_neg: int, mix_extreme: float = 0.7):
         def split_by_label(data):
             pos = [d for d in data if not d["negative"]]
             neg = [d for d in data if d["negative"]]
             return pos, neg
 
         estimates = self.load_estimates()
-        best_samples = [item for item in estimates if item.get('score', -1) > threshold]
-        best_pos, best_neg = split_by_label(best_samples)
-        return best_pos, best_neg
+        pos, neg = split_by_label(estimates)
+
+        def select(items, n):
+            if n <= 0:
+                return []
+
+            k_ext = int(round(mix_extreme * n))
+            k_unc = n - k_ext
+
+            by_score = sorted(items, key=lambda x: x["score"], reverse=True)
+            extreme = by_score[:k_ext]
+
+            if k_unc == 0:
+                return extreme
+
+            chosen = {d["raw"] for d in extreme}
+            remaining = [d for d in items if d["raw"] not in chosen]
+
+            # mais perto de 0.5 = mais incerto
+            uncertain = sorted(remaining, key=lambda x: abs(x["score"] - 0.5))[:k_unc]
+
+            return extreme + uncertain
+
+        return select(pos, n_pos), select(neg, n_neg)
 
     def load_estimates(self):
         """
