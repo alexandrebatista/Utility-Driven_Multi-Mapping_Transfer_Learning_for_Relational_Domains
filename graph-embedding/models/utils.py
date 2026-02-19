@@ -224,31 +224,44 @@ def split_and_save_samples_pl(filepath: str, output_dir: str = "."):
     print(f"Files saved in '{easy_dir}' and '{hard_dir}'")
 
 
-def generate_folds(base_path: str, small_dataset=True):
+def generate_folds(base_path: str, small_dataset=True, use_validation=False):
     """
     Generate train/test fold splits from directories following the 'foldXX' pattern.
 
     Args:
+        use_validation: Select one validation fold randomly.
         base_path (str): Path containing the fold directories.
         small_dataset (bool): Set if the training dataset has 1 fold or n - 1 folds
 
     Returns:
         list[dict]: A list of dictionaries, each containing 'train' and 'test' keys.
     """
+    import random
+
     # Get all directories that start with "fold"
     folds = sorted([d for d in os.listdir(base_path) if d.startswith("fold")])
 
     # Create all train/test splits
     if small_dataset:
         splits = [
-            {"train": [fold], "test": [f for f in folds if f != fold]}
+            {"test": [fold], "train": [f for f in folds if f != fold]}
             for fold in folds
         ]
+        if use_validation:
+            for configuration in splits:
+                validation_fold = random.choice(configuration["test"])
+                configuration["test"].remove(validation_fold)
+                configuration["validation"] = [validation_fold]
     else:
         splits = [
             {"test": [fold], "train": [f for f in folds if f != fold]}
             for fold in folds
         ]
+        if use_validation:
+            for configuration in splits:
+                validation_fold = random.choice(configuration["train"])
+                configuration["train"].remove(validation_fold)
+                configuration["validation"] = [validation_fold]
 
     return splits
 
