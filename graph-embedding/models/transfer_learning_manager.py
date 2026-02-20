@@ -110,18 +110,33 @@ class TransferlearningManager:
             self._dataset.get_target_domain_metadata()
         )
 
-    from collections import defaultdict
-
     def _get_transfer_dataset(self, fold_configuration):
         transfer_dataset = defaultdict(dict)
 
-        target_data = {
+        train_target_data = {
             **self._dataset.get_target_facts(fold_configuration["train"]),
             **self._dataset.get_target_pos(fold_configuration["train"]),
             **self._dataset.get_target_neg(fold_configuration["train"]),
         }
 
-        target_train_size = len(target_data["pos"]) + len(target_data["neg"])
+        validation_target_data = {
+            **self._dataset.get_target_facts(fold_configuration["validation"]),
+            **self._dataset.get_target_pos(fold_configuration["validation"]),
+            **self._dataset.get_target_neg(fold_configuration["validation"]),
+        }
+
+        target_train_size = len(train_target_data["pos"]) + len(train_target_data["neg"])
+
+        # --------- Baseline A: só Target ----------
+        model = RdnBoost(
+            target_domain_metadata=self._target_domain_metadata,
+            prefix_path=self._base_path,
+            name="kg_model"
+        )
+
+        model.train(train_target_data)
+        model.test(validation_target_data)
+        no_transfer_validation_metrics = model.get_test_metrics()
 
         beta = 2
         num_maps = len(self._source_domains)
@@ -134,6 +149,14 @@ class TransferlearningManager:
         n_neg = max(2, 2 * n_pos)
 
         for mapping_key, mapped_data in self._source_domains.items():
+            best = {
+                "auc_roc": no_transfer_validation_metrics.get("auc_roc", float("-inf")),
+                "auc_pr": no_transfer_validation_metrics.get("auc_pr", float("-inf")),
+                "mix_grid": None,
+                "pos": [],  # raw strings
+                "neg": [],  # raw strings
+            }
+
             source_domain_name = self._selected_mappings[mapping_key]["source"]
             valid_predicates = [
                 predicate
@@ -151,17 +174,6 @@ class TransferlearningManager:
             n_neg_eff = min(2 * n_pos_eff, avail_neg)
             n_neg_eff = max(2, n_neg_eff)
 
-            # --------- Baseline A: só Target ----------
-            selector_model = SelectorModel(
-                valid_predicates=valid_predicates,
-                target=self._target_domain_name,
-                target_domain_metadata=self._target_domain_metadata,
-                prefix_path=self._base_path,
-            )
-            selector_model.train(target_data)
-            target_train_metrics = selector_model.get_train_metrics()
-            selector_model.delete()
-
             # --------- Modelo B: Source + Target (all source) ----------
             selector_model = SelectorModel(
                 valid_predicates=valid_predicates,
@@ -171,28 +183,29 @@ class TransferlearningManager:
             )
 
             unified_data = {
-                "facts": target_data["facts"] + mapped_data["facts"],
-                "pos": target_data["pos"] + mapped_data["pos"],
-                "neg": target_data["neg"] + mapped_data["neg"],
+                "facts": train_target_data["facts"] + mapped_data["facts"],
+                "pos": train_target_data["pos"] + mapped_data["pos"],
+                "neg": train_target_data["neg"] + mapped_data["neg"],
             }
 
             selector_model.train(unified_data)
-            selector_model.test(target_data)
-            unified_data_train_metrics = selector_model.get_test_metrics()
+            selector_model.test(validation_target_data)
+            total_transfer_validation_metrics = selector_model.get_test_metrics()
+
+            if (total_transfer_validation_metrics["auc_pr"] > best["auc_pr"]) or (
+                    total_transfer_validation_metrics["auc_pr"] == best["auc_pr"]
+                    and total_transfer_validation_metrics["auc_roc"] > best["auc_roc"]
+            ):
+                best["auc_pr"] = total_transfer_validation_metrics["auc_pr"]
+                best["auc_roc"] = total_transfer_validation_metrics["auc_roc"]
+                best["mix_grid"] = None
+                best["pos"] = mapped_data["pos"]
+                best["neg"] = mapped_data["neg"]
 
             # Gera/gera estimates no source para seleção
             selector_model.test(mapped_data)
 
             mix_grid = [1.0, 0.9, 0.7, 0.5]
-
-            # Baseline inicial: usar all source (default)
-            best = {
-                "auc_roc": unified_data_train_metrics.get("auc_roc", float("-inf")),
-                "auc_pr": unified_data_train_metrics.get("auc_pr", float("-inf")),
-                "mix_grid": None,
-                "pos": mapped_data["pos"],  # raw strings
-                "neg": mapped_data["neg"],  # raw strings
-            }
 
             for mix in mix_grid:
                 best_pos, best_neg = selector_model.get_best_samples(
@@ -209,24 +222,24 @@ class TransferlearningManager:
                     name="tester"
                 )
 
-                tester_dataset = {
-                    "facts": target_data["facts"] + mapped_data["facts"],
-                    "pos": target_data["pos"] + best_pos_raw,
-                    "neg": target_data["neg"] + best_neg_raw,
+                transfer_candidate_dataset = {
+                    "facts": train_target_data["facts"] + mapped_data["facts"],
+                    "pos": train_target_data["pos"] + best_pos_raw,
+                    "neg": train_target_data["neg"] + best_neg_raw,
                 }
 
-                tester_model.train(tester_dataset)
-                tester_model.test(target_data)
-                tester_metrics = tester_model.get_test_metrics()
+                tester_model.train(transfer_candidate_dataset)
+                tester_model.test(validation_target_data)
+                candidate_validation_metrics = tester_model.get_test_metrics()
                 tester_model.delete()
 
                 # Prioriza AUC-PR, desempata com AUC-ROC
-                if (tester_metrics["auc_pr"] > best["auc_pr"]) or (
-                        tester_metrics["auc_pr"] == best["auc_pr"]
-                        and tester_metrics["auc_roc"] > best["auc_roc"]
+                if (candidate_validation_metrics["auc_pr"] > best["auc_pr"]) or (
+                        candidate_validation_metrics["auc_pr"] == best["auc_pr"]
+                        and candidate_validation_metrics["auc_roc"] > best["auc_roc"]
                 ):
-                    best["auc_pr"] = tester_metrics["auc_pr"]
-                    best["auc_roc"] = tester_metrics["auc_roc"]
+                    best["auc_pr"] = candidate_validation_metrics["auc_pr"]
+                    best["auc_roc"] = candidate_validation_metrics["auc_roc"]
                     best["mix_grid"] = mix
                     best["pos"] = best_pos_raw
                     best["neg"] = best_neg_raw
@@ -245,7 +258,9 @@ class TransferlearningManager:
             )
 
             selector_model.delete()
-            transfer_dataset[source_domain_name][mapping_key] = raw_transfer_dataset
+
+            if raw_transfer_dataset["pos"] and raw_transfer_dataset["neg"]:
+                transfer_dataset[source_domain_name][mapping_key] = raw_transfer_dataset
 
         return transfer_dataset
 
