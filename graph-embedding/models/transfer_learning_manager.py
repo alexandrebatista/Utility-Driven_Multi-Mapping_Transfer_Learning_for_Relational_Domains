@@ -28,7 +28,7 @@ class TransferlearningManager:
         self._dataset = DatabaseWrapper()
         self._dataset.process_target(self._target_domain_path, target_domain_name)
         self._target_domain_metadata = self._dataset.get_target_domain_metadata()
-        self._folds_split = self._dataset.generate_fold_splits()
+        self._folds_split = self._dataset.generate_fold_splits(use_validation=True)
 
         self._mappings_path = os.path.join("./mappings", f"{target_domain_name}.json")
 
@@ -111,6 +111,7 @@ class TransferlearningManager:
         )
 
     def _get_transfer_dataset(self, fold_configuration):
+        from collections import defaultdict
         transfer_dataset = defaultdict(dict)
 
         train_target_data = {
@@ -125,56 +126,54 @@ class TransferlearningManager:
             **self._dataset.get_target_neg(fold_configuration["validation"]),
         }
 
-        target_train_size = len(train_target_data["pos"]) + len(train_target_data["neg"])
+        target_pos_size = len(train_target_data["pos"])
 
         # --------- Baseline A: só Target ----------
-        model = RdnBoost(
+        model = SelectorModel(
+            valid_predicates=self._target_domain_metadata["predicates"],
+            target=self._target_domain_name,
             target_domain_metadata=self._target_domain_metadata,
             prefix_path=self._base_path,
-            name="kg_model"
+            name="baseline"
         )
 
         model.train(train_target_data)
         model.test(validation_target_data)
         no_transfer_validation_metrics = model.get_test_metrics()
 
-        beta = 2
-        num_maps = len(self._source_domains)
-
-        N_total = beta * target_train_size
-        N_map = max(3, N_total // max(1, num_maps))
-
-        # Proporção 1:2 (pos:neg) + piso
-        n_pos = max(1, N_map // 3)
-        n_neg = max(2, 2 * n_pos)
-
         for mapping_key, mapped_data in self._source_domains.items():
             best = {
                 "auc_roc": no_transfer_validation_metrics.get("auc_roc", float("-inf")),
                 "auc_pr": no_transfer_validation_metrics.get("auc_pr", float("-inf")),
                 "mix_grid": None,
-                "pos": [],  # raw strings
-                "neg": [],  # raw strings
+                "pos": [],
+                "neg": [],
             }
 
             source_domain_name = self._selected_mappings[mapping_key]["source"]
             valid_predicates = [
-                predicate
-                for predicate in list(self._selected_mappings[mapping_key]["predicate_mappings"].values())
+                predicate for predicate in list(self._selected_mappings[mapping_key]["predicate_mappings"].values())
                 if predicate is not None
             ]
 
-            # ----- Ajuste CRÍTICO: capar budget pelo que existe no mapping -----
             avail_pos = len(mapped_data["pos"])
             avail_neg = len(mapped_data["neg"])
 
-            # Mantém 1:2 e garante que não seleciona "tudo" por acidente quando n_pos/n_neg >= disponíveis
-            n_pos_eff = min(n_pos, avail_pos, avail_neg // 2)
-            n_pos_eff = max(1, n_pos_eff)
-            n_neg_eff = min(2 * n_pos_eff, avail_neg)
-            n_neg_eff = max(2, n_neg_eff)
+            if avail_pos == 0:
+                continue
 
-            # --------- Modelo B: Source + Target (all source) ----------
+            # -----------------------------------------------------------
+            # ORÇAMENTO ADAPTATIVO (ADAPTIVE BUDGET)
+            # -----------------------------------------------------------
+            # Limita a transferência ao tamanho do Target para evitar desbalanceamento,
+            # mas nunca pede mais do que o Source tem.
+            max_transfer_pos = min(avail_pos, target_pos_size)
+
+            # Mantém a proporção 1:2 (Pos:Neg) natural da maioria dos datasets relacionais
+            max_transfer_neg = min(avail_neg, max_transfer_pos * 2)
+
+            # --------- Modelo B: Target + Full Source ----------
+            # Testamos o pacote completo inicial para ver se a "força bruta" já ajuda
             selector_model = SelectorModel(
                 valid_predicates=valid_predicates,
                 target=self._target_domain_name,
@@ -190,27 +189,36 @@ class TransferlearningManager:
 
             selector_model.train(unified_data)
             selector_model.test(validation_target_data)
-            total_transfer_validation_metrics = selector_model.get_test_metrics()
+            total_transfer_metrics = selector_model.get_test_metrics()
 
-            if (total_transfer_validation_metrics["auc_pr"] > best["auc_pr"]) or (
-                    total_transfer_validation_metrics["auc_pr"] == best["auc_pr"]
-                    and total_transfer_validation_metrics["auc_roc"] > best["auc_roc"]
+            if (total_transfer_metrics["auc_pr"] > best["auc_pr"]) or (
+                    total_transfer_metrics["auc_pr"] == best["auc_pr"]
+                    and total_transfer_metrics["auc_roc"] > best["auc_roc"]
             ):
-                best["auc_pr"] = total_transfer_validation_metrics["auc_pr"]
-                best["auc_roc"] = total_transfer_validation_metrics["auc_roc"]
-                best["mix_grid"] = None
+                best["auc_pr"] = total_transfer_metrics["auc_pr"]
+                best["auc_roc"] = total_transfer_metrics["auc_roc"]
+                best["mix_grid"] = "Full Source"
                 best["pos"] = mapped_data["pos"]
                 best["neg"] = mapped_data["neg"]
 
-            # Gera/gera estimates no source para seleção
+            # Gera estimates no Source para ranquear as instâncias
             selector_model.test(mapped_data)
 
-            mix_grid = [1.0, 0.9, 0.7, 0.5]
+            # -----------------------------------------------------------
+            # BUSCA DE SUBCONJUNTOS (GRID SEARCH)
+            # -----------------------------------------------------------
+            # Testa proporções do nosso Orçamento Adaptativo
+            mix_grid = [1.0, 0.75, 0.5]
 
             for mix in mix_grid:
+                # Calcula o tamanho real da fatia baseada na proporção
+                current_n_pos = max(1, int(max_transfer_pos * mix))
+                current_n_neg = max(2, int(max_transfer_neg * mix))
+
                 best_pos, best_neg = selector_model.get_best_samples(
-                    n_pos=n_pos_eff, n_neg=n_neg_eff, mix_extreme=mix
+                    n_pos=current_n_pos, n_neg=current_n_neg, mix_extreme=mix
                 )
+
                 best_pos_raw = [s["raw"] for s in best_pos]
                 best_neg_raw = [s["raw"] for s in best_neg]
 
@@ -219,7 +227,7 @@ class TransferlearningManager:
                     target=self._target_domain_name,
                     target_domain_metadata=self._target_domain_metadata,
                     prefix_path=self._base_path,
-                    name="tester"
+                    name=f"tester_mix_{mix}"
                 )
 
                 transfer_candidate_dataset = {
@@ -230,37 +238,33 @@ class TransferlearningManager:
 
                 tester_model.train(transfer_candidate_dataset)
                 tester_model.test(validation_target_data)
-                candidate_validation_metrics = tester_model.get_test_metrics()
+                candidate_metrics = tester_model.get_test_metrics()
                 tester_model.delete()
 
-                # Prioriza AUC-PR, desempata com AUC-ROC
-                if (candidate_validation_metrics["auc_pr"] > best["auc_pr"]) or (
-                        candidate_validation_metrics["auc_pr"] == best["auc_pr"]
-                        and candidate_validation_metrics["auc_roc"] > best["auc_roc"]
+                if (candidate_metrics["auc_pr"] > best["auc_pr"]) or (
+                        candidate_metrics["auc_pr"] == best["auc_pr"]
+                        and candidate_metrics["auc_roc"] > best["auc_roc"]
                 ):
-                    best["auc_pr"] = candidate_validation_metrics["auc_pr"]
-                    best["auc_roc"] = candidate_validation_metrics["auc_roc"]
+                    best["auc_pr"] = candidate_metrics["auc_pr"]
+                    best["auc_roc"] = candidate_metrics["auc_roc"]
                     best["mix_grid"] = mix
                     best["pos"] = best_pos_raw
                     best["neg"] = best_neg_raw
 
-            raw_transfer_dataset = {
-                "facts": mapped_data["facts"],
-                "pos": best["pos"],  # raw strings
-                "neg": best["neg"],  # raw strings
-            }
-
-            # Debug opcional
-            print(
-                f"[mapping={mapping_key}] avail_pos/neg={avail_pos}/{avail_neg} "
-                f"n_pos/neg={n_pos_eff}/{n_neg_eff} best_mix={best['mix_grid']} "
-                f"auc_pr={best['auc_pr']:.4f} auc_roc={best['auc_roc']:.4f}"
-            )
+            # Se houver exemplos selecionados (Baseline A foi superado), transfere os fatos também
+            if best["pos"] or best["neg"]:
+                transfer_dataset[source_domain_name][mapping_key] = {
+                    "facts": mapped_data["facts"],
+                    "pos": best["pos"],
+                    "neg": best["neg"],
+                }
+                print(f"[{source_domain_name}] Sucesso! Mix: {best['mix_grid']} | AUC-PR: {best['auc_pr']:.4f}")
+            else:
+                print(f"[{source_domain_name}] Descartado. O Baseline Target-Only foi superior.")
 
             selector_model.delete()
 
-            if raw_transfer_dataset["pos"] and raw_transfer_dataset["neg"]:
-                transfer_dataset[source_domain_name][mapping_key] = raw_transfer_dataset
+        model.delete()
 
         return transfer_dataset
 
@@ -413,9 +417,9 @@ class TransferlearningManager:
         }
 
         kg_tl_out = self.kg_transfer_learning()
-        default_tl_out = self.default_transfer_learning()
+        #default_tl_out = self.default_transfer_learning()
 
-        results["default_transfer_learning_results"] = default_tl_out
+        #results["default_transfer_learning_results"] = default_tl_out
         results["kg_transfer_learning_results"] = kg_tl_out
         
         # Salva os resultados em arquivo JSON

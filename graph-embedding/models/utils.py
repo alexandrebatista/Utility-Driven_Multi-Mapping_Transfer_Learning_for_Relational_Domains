@@ -244,7 +244,7 @@ def generate_folds(base_path: str, small_dataset=True, use_validation=False):
     # Create all train/test splits
     if small_dataset:
         splits = [
-            {"test": [fold], "train": [f for f in folds if f != fold]}
+            {"train": [fold], "test": [f for f in folds if f != fold]}
             for fold in folds
         ]
         if use_validation:
