@@ -111,9 +111,18 @@ class TransferlearningManager:
         )
 
     def _get_transfer_dataset(self, fold_configuration):
+        """
+        Versão sem risco de colisão de artefatos em disco:
+        - Cada modelo recebe um `name` único por (fold, mapping, config).
+        - Mantém train/validation separados.
+        - Usa orçamento adaptativo por mapping.
+        - Compara: Target-only vs Full Source vs Subsets no validation.
+        """
         from collections import defaultdict
+
         transfer_dataset = defaultdict(dict)
 
+        # ---------- Target train/validation ----------
         train_target_data = {
             **self._dataset.get_target_facts(fold_configuration["train"]),
             **self._dataset.get_target_pos(fold_configuration["train"]),
@@ -127,58 +136,94 @@ class TransferlearningManager:
         }
 
         target_pos_size = len(train_target_data["pos"])
+        target_neg_size = len(train_target_data["neg"])
 
-        # --------- Baseline A: só Target ----------
-        model = SelectorModel(
+        # Identificador único do fold (para isolamento de artefatos)
+        fold_id = f"tr_{'-'.join(fold_configuration['train'])}_va_{'-'.join(fold_configuration['validation'])}"
+
+        # ---------- Baseline: Target-only ----------
+        baseline_model = SelectorModel(
             valid_predicates=self._target_domain_metadata["predicates"],
             target=self._target_domain_name,
             target_domain_metadata=self._target_domain_metadata,
             prefix_path=self._base_path,
-            name="baseline"
+            name=f"baseline_{self._target_domain_name}_{fold_id}",
         )
+        baseline_model.train(train_target_data)
+        baseline_model.test(validation_target_data)
+        no_transfer_val = baseline_model.get_test_metrics()
+        baseline_model.delete()
 
-        model.train(train_target_data)
-        model.test(validation_target_data)
-        no_transfer_validation_metrics = model.get_test_metrics()
+        def better(m, best):
+            baseline_pr = best["auc_pr"]
+            baseline_roc = best["auc_roc"]
 
+            # -------------------------------------------------------------
+            # 1. DEFINIÇÃO DO LIMIAR DINÂMICO (Risco vs Recompensa)
+            # -------------------------------------------------------------
+            if baseline_pr >= 0.80:
+                # Cenário A: Baseline Excelente (Alto risco de Negative Transfer)
+                # Exige uma melhora massiva (5%) para justificar a injeção de ruído.
+                min_improvement = 0.05
+
+            elif baseline_pr >= 0.65:
+                # Cenário B: Baseline Estável
+                # Exige uma melhora segura e moderada (2%).
+                min_improvement = 0.02
+
+            else:
+                # Cenário C: Baseline Ruim (Desespero por Informação)
+                # O Target não aprendeu quase nada. Aceitamos qualquer ajuda mínima (1%).
+                min_improvement = 0.01
+
+                # -------------------------------------------------------------
+            # 2. AVALIAÇÃO DA MÉTRICA
+            # -------------------------------------------------------------
+            # Regra 1: A AUC-PR (métrica principal) bateu a margem de segurança?
+            pr_melhorou_muito = m["auc_pr"] >= (baseline_pr + min_improvement)
+
+            # Regra 2 (Desempate): A AUC-PR não piorou, e a AUC-ROC teve um ganho real?
+            empate_tecnico_pr = m["auc_pr"] >= baseline_pr
+            roc_melhorou_muito = m["auc_roc"] >= (baseline_roc + min_improvement)
+
+            return pr_melhorou_muito or (empate_tecnico_pr and roc_melhorou_muito)
+        
         for mapping_key, mapped_data in self._source_domains.items():
-            best = {
-                "auc_roc": no_transfer_validation_metrics.get("auc_roc", float("-inf")),
-                "auc_pr": no_transfer_validation_metrics.get("auc_pr", float("-inf")),
-                "mix_grid": None,
-                "pos": [],
-                "neg": [],
-            }
-
             source_domain_name = self._selected_mappings[mapping_key]["source"]
             valid_predicates = [
-                predicate for predicate in list(self._selected_mappings[mapping_key]["predicate_mappings"].values())
-                if predicate is not None
+                p
+                for p in self._selected_mappings[mapping_key]["predicate_mappings"].values()
+                if p is not None
             ]
 
             avail_pos = len(mapped_data["pos"])
             avail_neg = len(mapped_data["neg"])
-
-            if avail_pos == 0:
+            if avail_pos == 0 or avail_neg == 0:
+                print(f"[{source_domain_name}] Skip (sem pos/neg no source).")
                 continue
 
-            # -----------------------------------------------------------
-            # ORÇAMENTO ADAPTATIVO (ADAPTIVE BUDGET)
-            # -----------------------------------------------------------
-            # Limita a transferência ao tamanho do Target para evitar desbalanceamento,
-            # mas nunca pede mais do que o Source tem.
+            # ---------- Orçamento adaptativo ----------
+            # (Você pode ajustar os multiplicadores se quiser ser mais/menos agressivo)
             max_transfer_pos = min(avail_pos, target_pos_size)
+            max_transfer_neg = min(avail_neg, 2 * max_transfer_pos)
 
-            # Mantém a proporção 1:2 (Pos:Neg) natural da maioria dos datasets relacionais
-            max_transfer_neg = min(avail_neg, max_transfer_pos * 2)
+            # ---------- Best tracker (começa no baseline Target-only) ----------
+            best = {
+                "auc_pr": no_transfer_val.get("auc_pr", float("-inf")),
+                "auc_roc": no_transfer_val.get("auc_roc", float("-inf")),
+                "choice": "Target-only",
+                "pos": [],
+                "neg": [],
+            }
 
-            # --------- Modelo B: Target + Full Source ----------
-            # Testamos o pacote completo inicial para ver se a "força bruta" já ajuda
+            # ---------- Modelo "Full Source" ----------
             selector_model = SelectorModel(
                 valid_predicates=valid_predicates,
                 target=self._target_domain_name,
                 target_domain_metadata=self._target_domain_metadata,
                 prefix_path=self._base_path,
+                # NOME ÚNICO (sem colisão)
+                name=f"selector_full_{mapping_key}_{fold_id}",
             )
 
             unified_data = {
@@ -189,82 +234,101 @@ class TransferlearningManager:
 
             selector_model.train(unified_data)
             selector_model.test(validation_target_data)
-            total_transfer_metrics = selector_model.get_test_metrics()
+            full_metrics = selector_model.get_test_metrics()
 
-            if (total_transfer_metrics["auc_pr"] > best["auc_pr"]) or (
-                    total_transfer_metrics["auc_pr"] == best["auc_pr"]
-                    and total_transfer_metrics["auc_roc"] > best["auc_roc"]
-            ):
-                best["auc_pr"] = total_transfer_metrics["auc_pr"]
-                best["auc_roc"] = total_transfer_metrics["auc_roc"]
-                best["mix_grid"] = "Full Source"
-                best["pos"] = mapped_data["pos"]
-                best["neg"] = mapped_data["neg"]
-
-            # Gera estimates no Source para ranquear as instâncias
-            selector_model.test(mapped_data)
-
-            # -----------------------------------------------------------
-            # BUSCA DE SUBCONJUNTOS (GRID SEARCH)
-            # -----------------------------------------------------------
-            # Testa proporções do nosso Orçamento Adaptativo
-            mix_grid = [1.0, 0.75, 0.5]
-
-            for mix in mix_grid:
-                # Calcula o tamanho real da fatia baseada na proporção
-                current_n_pos = max(1, int(max_transfer_pos * mix))
-                current_n_neg = max(2, int(max_transfer_neg * mix))
-
-                best_pos, best_neg = selector_model.get_best_samples(
-                    n_pos=current_n_pos, n_neg=current_n_neg, mix_extreme=mix
+            if better(full_metrics, best):
+                best.update(
+                    {
+                        "auc_pr": full_metrics["auc_pr"],
+                        "auc_roc": full_metrics["auc_roc"],
+                        "choice": "Full Source",
+                        "pos": mapped_data["pos"],
+                        "neg": mapped_data["neg"],
+                    }
                 )
 
-                best_pos_raw = [s["raw"] for s in best_pos]
-                best_neg_raw = [s["raw"] for s in best_neg]
+            # ---------- Gera estimates no source ----------
+            selector_model.test(mapped_data)
+
+            # Sanity check: garante que estimates correspondem exatamente ao mapping atual
+            try:
+                est = selector_model.load_estimates()
+                expected = avail_pos + avail_neg
+                if len(est) != expected:
+                    raise RuntimeError(
+                        f"Estimates size mismatch for {mapping_key}: got {len(est)} expected {expected}"
+                    )
+            except Exception as e:
+                selector_model.delete()
+                raise
+
+            # ---------- Subsets: teste só "tamanho" (sem misturar com mix_extreme) ----------
+            # Para eliminar variáveis, fixamos mix_extreme=1.0 (top-score puro).
+            # Se quiser voltar a extremos+incertos, crie outro grid separado.
+            size_grid = [1.0, 0.75, 0.5]
+            mix_extreme = 1.0
+
+            for frac in size_grid:
+                n_pos = max(1, int(max_transfer_pos * frac))
+                n_neg = max(2, int(max_transfer_neg * frac))
+
+                cand_pos, cand_neg = selector_model.get_best_samples(
+                    n_pos=n_pos, n_neg=n_neg, mix_extreme=mix_extreme
+                )
+                cand_pos_raw = [s["raw"] for s in cand_pos]
+                cand_neg_raw = [s["raw"] for s in cand_neg]
 
                 tester_model = SelectorModel(
                     valid_predicates=valid_predicates,
                     target=self._target_domain_name,
                     target_domain_metadata=self._target_domain_metadata,
                     prefix_path=self._base_path,
-                    name=f"tester_mix_{mix}"
+                    # NOME ÚNICO (sem colisão)
+                    name=f"tester_{mapping_key}_{fold_id}_frac{frac}",
                 )
 
                 transfer_candidate_dataset = {
                     "facts": train_target_data["facts"] + mapped_data["facts"],
-                    "pos": train_target_data["pos"] + best_pos_raw,
-                    "neg": train_target_data["neg"] + best_neg_raw,
+                    "pos": train_target_data["pos"] + cand_pos_raw,
+                    "neg": train_target_data["neg"] + cand_neg_raw,
                 }
 
                 tester_model.train(transfer_candidate_dataset)
                 tester_model.test(validation_target_data)
-                candidate_metrics = tester_model.get_test_metrics()
+                cand_metrics = tester_model.get_test_metrics()
                 tester_model.delete()
 
-                if (candidate_metrics["auc_pr"] > best["auc_pr"]) or (
-                        candidate_metrics["auc_pr"] == best["auc_pr"]
-                        and candidate_metrics["auc_roc"] > best["auc_roc"]
-                ):
-                    best["auc_pr"] = candidate_metrics["auc_pr"]
-                    best["auc_roc"] = candidate_metrics["auc_roc"]
-                    best["mix_grid"] = mix
-                    best["pos"] = best_pos_raw
-                    best["neg"] = best_neg_raw
+                if better(cand_metrics, best):
+                    best.update(
+                        {
+                            "auc_pr": cand_metrics["auc_pr"],
+                            "auc_roc": cand_metrics["auc_roc"],
+                            "choice": f"Subset frac={frac}",
+                            "pos": cand_pos_raw,
+                            "neg": cand_neg_raw,
+                        }
+                    )
 
-            # Se houver exemplos selecionados (Baseline A foi superado), transfere os fatos também
-            if best["pos"] or best["neg"]:
+            selector_model.delete()
+
+            # ---------- Só inclui mapping se realmente superou baseline ----------
+            improved_over_baseline = best["choice"] != "Target-only"
+            if improved_over_baseline:
                 transfer_dataset[source_domain_name][mapping_key] = {
                     "facts": mapped_data["facts"],
                     "pos": best["pos"],
                     "neg": best["neg"],
                 }
-                print(f"[{source_domain_name}] Sucesso! Mix: {best['mix_grid']} | AUC-PR: {best['auc_pr']:.4f}")
+                print(
+                    f"[{source_domain_name}] OK: {best['choice']} | "
+                    f"AUC-PR {best['auc_pr']:.4f} AUC-ROC {best['auc_roc']:.4f} | "
+                    f"avail {avail_pos}/{avail_neg} max {max_transfer_pos}/{max_transfer_neg}"
+                )
             else:
-                print(f"[{source_domain_name}] Descartado. O Baseline Target-Only foi superior.")
-
-            selector_model.delete()
-
-        model.delete()
+                print(
+                    f"[{source_domain_name}] Drop: Target-only melhor/igual | "
+                    f"AUC-PR {best['auc_pr']:.4f} AUC-ROC {best['auc_roc']:.4f}"
+                )
 
         return transfer_dataset
 
