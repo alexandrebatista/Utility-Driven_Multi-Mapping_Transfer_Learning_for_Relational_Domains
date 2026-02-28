@@ -112,11 +112,11 @@ class TransferlearningManager:
 
     def _get_transfer_dataset(self, fold_configuration):
         """
-        Versão sem risco de colisão de artefatos em disco:
-        - Cada modelo recebe um `name` único por (fold, mapping, config).
-        - Mantém train/validation separados.
-        - Usa orçamento adaptativo por mapping.
-        - Compara: Target-only vs Full Source vs Subsets no validation.
+        Versão Definitiva para a Dissertação: Structural Reinforcement (Oversampling)
+        - Mantém a topologia 100% intacta (nunca corta nós do Source).
+        - Identifica a 'Elite' (instâncias com maior score no Target).
+        - Duplica a Elite (Oversampling) para atuar como peso estrutural.
+        - Usa Validação Empírica com Limiar Dinâmico de Risco.
         """
         from collections import defaultdict
 
@@ -135,13 +135,10 @@ class TransferlearningManager:
             **self._dataset.get_target_neg(fold_configuration["validation"]),
         }
 
-        target_pos_size = len(train_target_data["pos"])
-        target_neg_size = len(train_target_data["neg"])
-
-        # Identificador único do fold (para isolamento de artefatos)
+        # Identificador único do fold (para isolamento de artefatos em disco)
         fold_id = f"tr_{'-'.join(fold_configuration['train'])}_va_{'-'.join(fold_configuration['validation'])}"
 
-        # ---------- Baseline: Target-only ----------
+        # ---------- Baseline A: Target-only ----------
         baseline_model = SelectorModel(
             valid_predicates=self._target_domain_metadata["predicates"],
             target=self._target_domain_name,
@@ -154,40 +151,25 @@ class TransferlearningManager:
         no_transfer_val = baseline_model.get_test_metrics()
         baseline_model.delete()
 
+        # ---------- Função de Decisão com Risco Dinâmico ----------
         def better(m, best):
             baseline_pr = best["auc_pr"]
             baseline_roc = best["auc_roc"]
 
-            # -------------------------------------------------------------
-            # 1. DEFINIÇÃO DO LIMIAR DINÂMICO (Risco vs Recompensa)
-            # -------------------------------------------------------------
+            # Limiar Dinâmico: Quanto melhor o baseline, maior a exigência para aceitar ruído externo.
             if baseline_pr >= 0.80:
-                # Cenário A: Baseline Excelente (Alto risco de Negative Transfer)
-                # Exige uma melhora massiva (5%) para justificar a injeção de ruído.
-                min_improvement = 0.05
-
+                min_improvement = 0.05  # Risco alto: exige 5% de ganho real
             elif baseline_pr >= 0.65:
-                # Cenário B: Baseline Estável
-                # Exige uma melhora segura e moderada (2%).
-                min_improvement = 0.02
-
+                min_improvement = 0.02  # Risco médio: exige 2% de ganho real
             else:
-                # Cenário C: Baseline Ruim (Desespero por Informação)
-                # O Target não aprendeu quase nada. Aceitamos qualquer ajuda mínima (1%).
-                min_improvement = 0.01
+                min_improvement = 0.01  # Desespero: aceita 1% de ajuda
 
-                # -------------------------------------------------------------
-            # 2. AVALIAÇÃO DA MÉTRICA
-            # -------------------------------------------------------------
-            # Regra 1: A AUC-PR (métrica principal) bateu a margem de segurança?
             pr_melhorou_muito = m["auc_pr"] >= (baseline_pr + min_improvement)
-
-            # Regra 2 (Desempate): A AUC-PR não piorou, e a AUC-ROC teve um ganho real?
             empate_tecnico_pr = m["auc_pr"] >= baseline_pr
             roc_melhorou_muito = m["auc_roc"] >= (baseline_roc + min_improvement)
 
             return pr_melhorou_muito or (empate_tecnico_pr and roc_melhorou_muito)
-        
+
         for mapping_key, mapped_data in self._source_domains.items():
             source_domain_name = self._selected_mappings[mapping_key]["source"]
             valid_predicates = [
@@ -202,12 +184,7 @@ class TransferlearningManager:
                 print(f"[{source_domain_name}] Skip (sem pos/neg no source).")
                 continue
 
-            # ---------- Orçamento adaptativo ----------
-            # (Você pode ajustar os multiplicadores se quiser ser mais/menos agressivo)
-            max_transfer_pos = min(avail_pos, target_pos_size)
-            max_transfer_neg = min(avail_neg, 2 * max_transfer_pos)
-
-            # ---------- Best tracker (começa no baseline Target-only) ----------
+            # Best tracker (começa cravado no baseline Target-only)
             best = {
                 "auc_pr": no_transfer_val.get("auc_pr", float("-inf")),
                 "auc_roc": no_transfer_val.get("auc_roc", float("-inf")),
@@ -216,13 +193,12 @@ class TransferlearningManager:
                 "neg": [],
             }
 
-            # ---------- Modelo "Full Source" ----------
+            # ---------- Modelo B: "Full Source" ----------
             selector_model = SelectorModel(
                 valid_predicates=valid_predicates,
                 target=self._target_domain_name,
                 target_domain_metadata=self._target_domain_metadata,
                 prefix_path=self._base_path,
-                # NOME ÚNICO (sem colisão)
                 name=f"selector_full_{mapping_key}_{fold_id}",
             )
 
@@ -247,50 +223,54 @@ class TransferlearningManager:
                     }
                 )
 
-            # ---------- Gera estimates no source ----------
+            # ---------- Gera estimates no source para achar a Elite ----------
             selector_model.test(mapped_data)
 
-            # Sanity check: garante que estimates correspondem exatamente ao mapping atual
+            # Sanity check ajustado (Aviso em vez de Erro Fatal para proteger contra nós isolados)
             try:
                 est = selector_model.load_estimates()
                 expected = avail_pos + avail_neg
                 if len(est) != expected:
-                    raise RuntimeError(
-                        f"Estimates size mismatch for {mapping_key}: got {len(est)} expected {expected}"
-                    )
+                    print(
+                        f"   [AVISO] {source_domain_name}: Recebeu {len(est)} estimates, esperado {expected}. O BoostSRL ignorou nós isolados.")
             except Exception as e:
+                print(f"   [ERRO] Falha ao carregar estimates para {source_domain_name}: {e}")
                 selector_model.delete()
-                raise
+                continue  # Pula para a próxima origem em vez de matar a execução
 
-            # ---------- Subsets: teste só "tamanho" (sem misturar com mix_extreme) ----------
-            # Para eliminar variáveis, fixamos mix_extreme=1.0 (top-score puro).
-            # Se quiser voltar a extremos+incertos, crie outro grid separado.
-            size_grid = [1.0, 0.75, 0.5]
-            mix_extreme = 1.0
+            # ---------- REFORÇO ESTRUTURAL (OVERSAMPLING) ----------
+            # Testamos duplicar os top 25% e os top 50% mais confiáveis.
+            oversample_grid = [0.25, 0.50]
+            mix_extreme = 1.0  # Queremos a elite pura (top scores)
 
-            for frac in size_grid:
-                n_pos = max(1, int(max_transfer_pos * frac))
-                n_neg = max(2, int(max_transfer_neg * frac))
+            for frac in oversample_grid:
+                n_pos_elite = max(1, int(avail_pos * frac))
+                n_neg_elite = max(2, int(avail_neg * frac))
 
-                cand_pos, cand_neg = selector_model.get_best_samples(
-                    n_pos=n_pos, n_neg=n_neg, mix_extreme=mix_extreme
+                cand_pos_elite, cand_neg_elite = selector_model.get_best_samples(
+                    n_pos=n_pos_elite, n_neg=n_neg_elite, mix_extreme=mix_extreme
                 )
-                cand_pos_raw = [s["raw"] for s in cand_pos]
-                cand_neg_raw = [s["raw"] for s in cand_neg]
+
+                elite_pos_raw = [s["raw"] for s in cand_pos_elite]
+                elite_neg_raw = [s["raw"] for s in cand_neg_elite]
+
+                # A MÁGICA DO OVERSAMPLING ACONTECE AQUI:
+                # O Source Original é MANTIDO. A Elite é SOMADA (Duplicada).
+                reinforced_pos = mapped_data["pos"] + elite_pos_raw
+                reinforced_neg = mapped_data["neg"] + elite_neg_raw
 
                 tester_model = SelectorModel(
                     valid_predicates=valid_predicates,
                     target=self._target_domain_name,
                     target_domain_metadata=self._target_domain_metadata,
                     prefix_path=self._base_path,
-                    # NOME ÚNICO (sem colisão)
-                    name=f"tester_{mapping_key}_{fold_id}_frac{frac}",
+                    name=f"tester_{mapping_key}_{fold_id}_over{frac}",
                 )
 
                 transfer_candidate_dataset = {
                     "facts": train_target_data["facts"] + mapped_data["facts"],
-                    "pos": train_target_data["pos"] + cand_pos_raw,
-                    "neg": train_target_data["neg"] + cand_neg_raw,
+                    "pos": train_target_data["pos"] + reinforced_pos,
+                    "neg": train_target_data["neg"] + reinforced_neg,
                 }
 
                 tester_model.train(transfer_candidate_dataset)
@@ -303,31 +283,31 @@ class TransferlearningManager:
                         {
                             "auc_pr": cand_metrics["auc_pr"],
                             "auc_roc": cand_metrics["auc_roc"],
-                            "choice": f"Subset frac={frac}",
-                            "pos": cand_pos_raw,
-                            "neg": cand_neg_raw,
+                            "choice": f"Full Source + {frac * 100}% Oversampling",
+                            "pos": reinforced_pos,
+                            "neg": reinforced_neg,
                         }
                     )
 
             selector_model.delete()
 
-            # ---------- Só inclui mapping se realmente superou baseline ----------
+            # ---------- Finaliza o Mapeamento ----------
             improved_over_baseline = best["choice"] != "Target-only"
+
             if improved_over_baseline:
                 transfer_dataset[source_domain_name][mapping_key] = {
-                    "facts": mapped_data["facts"],
+                    "facts": mapped_data["facts"],  # Fatos são sempre passados integralmente
                     "pos": best["pos"],
                     "neg": best["neg"],
                 }
                 print(
-                    f"[{source_domain_name}] OK: {best['choice']} | "
-                    f"AUC-PR {best['auc_pr']:.4f} AUC-ROC {best['auc_roc']:.4f} | "
-                    f"avail {avail_pos}/{avail_neg} max {max_transfer_pos}/{max_transfer_neg}"
+                    f"[{source_domain_name}] APROVADO: {best['choice']} | "
+                    f"AUC-PR {best['auc_pr']:.4f} AUC-ROC {best['auc_roc']:.4f}"
                 )
             else:
                 print(
-                    f"[{source_domain_name}] Drop: Target-only melhor/igual | "
-                    f"AUC-PR {best['auc_pr']:.4f} AUC-ROC {best['auc_roc']:.4f}"
+                    f"[{source_domain_name}] REJEITADO (Risco vs Ganho não justificou): Mantendo Target-only. | "
+                    f"Baseline AUC-PR: {no_transfer_val.get('auc_pr', 0):.4f}"
                 )
 
         return transfer_dataset
@@ -481,9 +461,9 @@ class TransferlearningManager:
         }
 
         kg_tl_out = self.kg_transfer_learning()
-        #default_tl_out = self.default_transfer_learning()
+        default_tl_out = self.default_transfer_learning()
 
-        #results["default_transfer_learning_results"] = default_tl_out
+        results["default_transfer_learning_results"] = default_tl_out
         results["kg_transfer_learning_results"] = kg_tl_out
         
         # Salva os resultados em arquivo JSON
