@@ -9,7 +9,7 @@ from mapping.utils import select_mappings
 base_path = "./tl_experiments_5"
 
 domains = get_dataset_names("./preprocessed")
-targets = ["nell_finances"]#, "nell_finances", "yeast"]
+targets = ["cora"]#, "nell_finances", "yeast"]
 target_domains = [domain for domain in targets if domain != "uwcse"]
 
 
@@ -23,7 +23,7 @@ for target_domain_name in target_domains:
     )
 
     for source_domain_name in domains:
-        if source_domain_name == target_domain_name or source_domain_name != "nell_sports":
+        if source_domain_name == target_domain_name or source_domain_name != "imdb":
             continue
 
         selected_mappings = select_mappings(
