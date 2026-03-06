@@ -112,13 +112,15 @@ class TransferlearningManager:
 
     def _get_transfer_dataset(self, fold_configuration):
         """
-        Versão Definitiva para a Dissertação: Oversampling + Limiar Dinâmico + Trava de Treino.
-        - Mantém a topologia 100% intacta (nunca corta nós do Source).
-        - Duplica a Elite (Oversampling) para atuar como peso estrutural.
-        - Usa Validação Empírica com Limiar Dinâmico de Risco.
-        - TRAVA DE SANIDADE: Rejeita candidatos que causem Catastrophic Forgetting no Treino.
+        Versão Definitiva: Soft-Attention Relacional com Modulador Epistêmico e Arquivo Único.
+        - Preserva 100% da topologia (sem pruning ou oversampling relacional).
+        - Pesos baseados em Consistência Semântica (Target vs. Gabarito do Source).
+        - Bypass automático em caso de colapso do Target (Cold-Start).
+        - Normalização de volume estratificada (proteção de classes minoritárias).
+        - Exporta um ÚNICO arquivo de pesos consolidado para o Java.
         """
         from collections import defaultdict
+        import os
 
         transfer_dataset = defaultdict(dict)
 
@@ -135,196 +137,144 @@ class TransferlearningManager:
             **self._dataset.get_target_neg(fold_configuration["validation"]),
         }
 
-        # Identificador único do fold (para isolamento de artefatos em disco)
         fold_id = f"tr_{'-'.join(fold_configuration['train'])}_va_{'-'.join(fold_configuration['validation'])}"
 
-        # ---------- 2. AVALIAÇÃO DO BASELINE (TARGET-ONLY) ----------
-        baseline_model = SelectorModel(
+        # ---------- 2. ORÁCULO E DIAGNÓSTICO DO TARGET ----------
+        print(f"\n[Soft-Attention] Diagnosticando o domínio Alvo (Fold: {fold_id})...")
+        scorer_model = SelectorModel(
             valid_predicates=self._target_domain_metadata["predicates"],
             target=self._target_domain_name,
             target_domain_metadata=self._target_domain_metadata,
             prefix_path=self._base_path,
-            name=f"baseline_{self._target_domain_name}_{fold_id}",
+            name=f"scorer_{self._target_domain_name}_{fold_id}",
         )
-        baseline_model.train(train_target_data)
+        scorer_model.train(train_target_data)
 
-        # Coleta as métricas de TREINO e VALIDAÇÃO do Baseline
-        no_transfer_train = baseline_model.get_train_metrics()
-        baseline_model.test(validation_target_data)
-        no_transfer_val = baseline_model.get_test_metrics()
-        baseline_model.delete()
+        # Avalia a competência do Target para calibrar o rigor do filtro
+        scorer_model.test(validation_target_data)
+        oracle_metrics = scorer_model.get_test_metrics()
+        oracle_pr = oracle_metrics.get("auc_pr", 0.5)
 
-        # ---------- 3. FUNÇÃO DE DECISÃO ROBUSTA ----------
-        def better(cand_val, cand_train, best_val, best_train):
-            # 3.1. TRAVA DE SANIDADE (Anti-Catastrophic Forgetting)
-            # Se a nova escolha destrói a performance no grafo principal (treino)
-            # em mais de 3%, ela é uma fraude (overfitting na validação). Rejeita.
-            if cand_train.get("auc_pr", 0) < (best_train.get("auc_pr", 0) - 0.03):
-                return False
+        # Definição do Modulador Epistêmico (Teto de Impacto e Bypass)
+        if oracle_pr >= 0.75:
+            oracle_status = "ESPECIALISTA"
+            max_impact_ratio = 0.5  # Source atua apenas como assistente (Max 50%)
+        elif oracle_pr >= 0.60:
+            oracle_status = "MEDIANO"
+            max_impact_ratio = 1.0  # Paridade de volume (1:1), com filtro de consistência
+        else:
+            oracle_status = "COLAPSO_TARGET (Bypass Ativado)"
+            max_impact_ratio = 1.0  # Paridade de volume (1:1), SEM filtro (aceita tudo do Source com peso 1.0)
 
-            # 3.2. LIMIAR DINÂMICO DE RISCO NA VALIDAÇÃO
-            baseline_pr = best_val.get("auc_pr", 0)
-            baseline_roc = best_val.get("auc_roc", 0)
+        print(f"   -> Status: {oracle_status} | AUC-PR: {oracle_pr:.4f} | Teto de Impacto: {max_impact_ratio}x")
 
-            if baseline_pr >= 0.80:
-                min_improvement = 0.05  # Risco alto: exige 5% de ganho real
-            elif baseline_pr >= 0.65:
-                min_improvement = 0.02  # Risco médio: exige 2% de ganho real
-            else:
-                min_improvement = 0.01  # Desespero: aceita 1% de ajuda
+        # =====================================================================
+        # DICIONÁRIO GLOBAL DE PESOS (Para o arquivo único)
+        # =====================================================================
+        global_instance_weights = {}
 
-            pr_melhorou_muito = cand_val.get("auc_pr", 0) >= (baseline_pr + min_improvement)
-            empate_tecnico_pr = cand_val.get("auc_pr", 0) >= baseline_pr
-            roc_melhorou_muito = cand_val.get("auc_roc", 0) >= (baseline_roc + min_improvement)
+        # 3.1. Âncora do Target (Peso Absoluto 1.0 para os dados nativos)
+        for pos_inst in train_target_data["pos"]:
+            global_instance_weights[pos_inst] = 1.0
+        for neg_inst in train_target_data["neg"]:
+            global_instance_weights[neg_inst] = 1.0
 
-            return pr_melhorou_muito or (empate_tecnico_pr and roc_melhorou_muito)
-
-        # ---------- 4. AVALIAÇÃO DAS ORIGENS (SOURCES) ----------
+        # ---------- 3. AVALIAÇÃO DAS ORIGENS (SOURCES) ----------
         for mapping_key, mapped_data in self._source_domains.items():
             source_domain_name = self._selected_mappings[mapping_key]["source"]
-            valid_predicates = [
-                p for p in self._selected_mappings[mapping_key]["predicate_mappings"].values() if p is not None
-            ]
 
-            avail_pos = len(mapped_data["pos"])
-            avail_neg = len(mapped_data["neg"])
-            if avail_pos == 0 or avail_neg == 0:
-                print(f"[{source_domain_name}] Skip (sem pos/neg no source).")
+            if not mapped_data["pos"] or not mapped_data["neg"]:
                 continue
 
-            # Inicia o rastreador de melhores escolhas cravado no Baseline Target-only
-            best_val = {
-                "auc_pr": no_transfer_val.get("auc_pr", float("-inf")),
-                "auc_roc": no_transfer_val.get("auc_roc", float("-inf")),
-                "choice": "Target-only",
-                "pos": [],
-                "neg": [],
-            }
-            best_train = no_transfer_train.copy()
+            source_raw_weights_pos = {}
+            source_raw_weights_neg = {}
+            raw_source_weight_sum_pos = 0.0
+            raw_source_weight_sum_neg = 0.0
+            pos_source_set = set(mapped_data["pos"])
 
-            # ---------- 4.1. MODELO "FULL SOURCE" ----------
-            selector_model = SelectorModel(
-                valid_predicates=valid_predicates,
-                target=self._target_domain_name,
-                target_domain_metadata=self._target_domain_metadata,
-                prefix_path=self._base_path,
-                name=f"selector_full_{mapping_key}_{fold_id}",
-            )
-
-            unified_data = {
-                "facts": train_target_data["facts"] + mapped_data["facts"],
-                "pos": train_target_data["pos"] + mapped_data["pos"],
-                "neg": train_target_data["neg"] + mapped_data["neg"],
-            }
-
-            selector_model.train(unified_data)
-            full_train_metrics = selector_model.get_train_metrics()
-
-            selector_model.test(validation_target_data)
-            full_val_metrics = selector_model.get_test_metrics()
-
-            # Avalia a Transferência Total usando a Trava e o Limiar Dinâmico
-            if better(full_val_metrics, full_train_metrics, best_val, best_train):
-                best_val.update({
-                    "auc_pr": full_val_metrics["auc_pr"],
-                    "auc_roc": full_val_metrics["auc_roc"],
-                    "choice": "Full Source",
-                    "pos": mapped_data["pos"],
-                    "neg": mapped_data["neg"],
-                })
-                best_train = full_train_metrics.copy()
-
-            # ---------- 4.2. GERAÇÃO DE ESTIMATIVAS DA ELITE ----------
-            selector_model.test(mapped_data)
-
-            # Sanity check ajustado (Aviso em vez de Erro Fatal para proteger contra nós isolados)
-            try:
-                est = selector_model.load_estimates()
-                expected = avail_pos + avail_neg
-                if len(est) != expected:
-                    print(
-                        f"   [AVISO] {source_domain_name}: Recebeu {len(est)} estimates, esperado {expected}. O BoostSRL ignorou nós isolados.")
-            except Exception as e:
-                print(f"   [ERRO] Falha ao carregar estimates para {source_domain_name}: {e}")
-                selector_model.delete()
-                continue  # Pula para a próxima origem em vez de matar a execução
-
-            # ---------- 4.3. REFORÇO ESTRUTURAL (OVERSAMPLING) ----------
-            # Testamos duplicar os top 25% e os top 50% mais confiáveis.
-            oversample_grid = [0.25, 0.50]
-            mix_extreme = 1.0  # Queremos a elite pura (top scores)
-
-            for frac in oversample_grid:
-                n_pos_elite = max(1, int(avail_pos * frac))
-                n_neg_elite = max(2, int(avail_neg * frac))
-
-                cand_pos_elite, cand_neg_elite = selector_model.get_best_samples(
-                    n_pos=n_pos_elite, n_neg=n_neg_elite, mix_extreme=mix_extreme
-                )
-
-                elite_pos_raw = [s["raw"] for s in cand_pos_elite]
-                elite_neg_raw = [s["raw"] for s in cand_neg_elite]
-
-                # O Source Original é MANTIDO. A Elite é SOMADA (Duplicada).
-                reinforced_pos = mapped_data["pos"] + elite_pos_raw
-                reinforced_neg = mapped_data["neg"] + elite_neg_raw
-
-                tester_model = SelectorModel(
-                    valid_predicates=valid_predicates,
-                    target=self._target_domain_name,
-                    target_domain_metadata=self._target_domain_metadata,
-                    prefix_path=self._base_path,
-                    name=f"tester_{mapping_key}_{fold_id}_over{frac}",
-                )
-
-                transfer_candidate_dataset = {
-                    "facts": train_target_data["facts"] + mapped_data["facts"],
-                    "pos": train_target_data["pos"] + reinforced_pos,
-                    "neg": train_target_data["neg"] + reinforced_neg,
-                }
-
-                tester_model.train(transfer_candidate_dataset)
-                cand_train_metrics = tester_model.get_train_metrics()
-
-                tester_model.test(validation_target_data)
-                cand_val_metrics = tester_model.get_test_metrics()
-                tester_model.delete()
-
-                # Avalia o Oversampling usando a Trava e o Limiar Dinâmico
-                if better(cand_val_metrics, cand_train_metrics, best_val, best_train):
-                    best_val.update({
-                        "auc_pr": cand_val_metrics["auc_pr"],
-                        "auc_roc": cand_val_metrics["auc_roc"],
-                        "choice": f"Full Source + {frac * 100}% Oversampling Elite",
-                        "pos": reinforced_pos,
-                        "neg": reinforced_neg,
-                    })
-                    best_train = cand_train_metrics.copy()
-
-            selector_model.delete()
-
-            # ---------- 5. FINALIZA O MAPEAMENTO ----------
-            improved_over_baseline = best_val["choice"] != "Target-only"
-
-            if improved_over_baseline:
-                transfer_dataset[source_domain_name][mapping_key] = {
-                    "facts": mapped_data["facts"],  # Fatos são sempre passados integralmente
-                    "pos": best_val["pos"],
-                    "neg": best_val["neg"],
-                }
-                print(
-                    f"[{source_domain_name}] APROVADO: {best_val['choice']} | "
-                    f"Val AUC-PR: {best_val['auc_pr']:.4f} (Treino protegido)"
-                )
+            # 3.2. Bypass ou Avaliação do Oráculo
+            if oracle_status == "COLAPSO_TARGET (Bypass Ativado)":
+                print(f"   [{source_domain_name}] Bypass: Transferindo Source com peso total 1.0.")
+                for raw_instance in mapped_data["pos"]:
+                    source_raw_weights_pos[raw_instance] = 1.0
+                    raw_source_weight_sum_pos += 1.0
+                for raw_instance in mapped_data["neg"]:
+                    source_raw_weights_neg[raw_instance] = 1.0
+                    raw_source_weight_sum_neg += 1.0
             else:
-                print(
-                    f"[{source_domain_name}] REJEITADO (Falhou na Trava de Treino ou Risco/Ganho): Mantendo Target-only. | "
-                    f"Baseline Val AUC-PR: {no_transfer_val.get('auc_pr', 0):.4f}"
-                )
+                scorer_model.test(mapped_data)
+                try:
+                    estimates = scorer_model.load_estimates()
+                except Exception as e:
+                    print(f"   [ERRO] Falha ao carregar estimates: {e}")
+                    continue
 
-        return transfer_dataset
+                for est in estimates:
+                    raw_instance = est["raw"]
+                    consistency = est["score"]
 
-    def _kg_training_workflow(self, fold_configuration):
+                    if oracle_status == "ESPECIALISTA":
+                        w = consistency if consistency >= 0.7 else 0.01
+                    else:  # MEDIANO
+                        w = consistency if consistency >= 0.6 else (0.05 if consistency <= 0.4 else 0.5)
+
+                    w = max(w, 0.01)
+
+                    if raw_instance in pos_source_set:
+                        source_raw_weights_pos[raw_instance] = w
+                        raw_source_weight_sum_pos += w
+                    else:
+                        source_raw_weights_neg[raw_instance] = w
+                        raw_source_weight_sum_neg += w
+
+            # 3.3. Normalização Estratificada de Volume
+            target_pos_weight = float(len(train_target_data["pos"]))
+            target_neg_weight = float(len(train_target_data["neg"]))
+
+            max_allowed_source_pos = target_pos_weight * max_impact_ratio
+            max_allowed_source_neg = target_neg_weight * max_impact_ratio
+
+            scaling_factor_pos = 1.0
+            if raw_source_weight_sum_pos > max_allowed_source_pos and raw_source_weight_sum_pos > 0:
+                scaling_factor_pos = max_allowed_source_pos / raw_source_weight_sum_pos
+
+            scaling_factor_neg = 1.0
+            if raw_source_weight_sum_neg > max_allowed_source_neg and raw_source_weight_sum_neg > 0:
+                scaling_factor_neg = max_allowed_source_neg / raw_source_weight_sum_neg
+
+            # Salva no dicionário GLOBAL
+            for inst, w in source_raw_weights_pos.items():
+                global_instance_weights[inst] = max(w * scaling_factor_pos, 0.001)
+
+            for inst, w in source_raw_weights_neg.items():
+                global_instance_weights[inst] = max(w * scaling_factor_neg, 0.001)
+
+            print(f"   [{source_domain_name}] Scaling POS: {scaling_factor_pos:.4f} | NEG: {scaling_factor_neg:.4f}")
+
+            # Salva os dados no dataset de transferência
+            transfer_dataset[source_domain_name][mapping_key] = {
+                "facts": mapped_data["facts"],
+                "pos": mapped_data["pos"],
+                "neg": mapped_data["neg"]
+            }
+
+        # ---------- 4. EXPORTAÇÃO DO ARQUIVO ÚNICO DE PESOS ----------
+        weights_dir = os.path.join(self._base_path, "weights")
+        os.makedirs(weights_dir, exist_ok=True)
+
+        # O nome do arquivo agora reflete apenas o Target e o Fold (já que unifica as origens)
+        single_weights_file_path = os.path.join(weights_dir, f"weights_global_{self._target_domain_name}_{fold_id}.txt")
+
+        with open(single_weights_file_path, "w") as f:
+            for inst, w in global_instance_weights.items():
+                f.write(f"{inst}\t{w:.6f}\n")
+
+        print(f"\n[Soft-Attention] Arquivo ÚNICO de pesos gerado: {single_weights_file_path}")
+
+        scorer_model.delete()
+        return transfer_dataset, single_weights_file_path
+
+    def _kg_training_workflow(self, fold_configuration, weights_file_path):
         transfer_learning_train_dataset = self._dataset.generate_train_srldatabase(
             fold_configuration["train"],
             use_recursion=self._target_uses_recursion,
@@ -338,7 +288,8 @@ class TransferlearningManager:
         model = RdnBoost(
             target_domain_metadata=self._target_domain_metadata,
             prefix_path=self._base_path,
-            name="kg_model"
+            name="kg_model",
+            weights_file_path=weights_file_path
         )
 
         model.train(transfer_learning_train_dataset)
@@ -412,7 +363,7 @@ class TransferlearningManager:
 
                 if fold_configuration["train"][0] not in tl_not_possible:
                     # Get transfer dataset
-                    transfer_learning_raw_dataset = self._get_transfer_dataset(
+                    transfer_learning_raw_dataset, weights_file_path = self._get_transfer_dataset(
                         fold_configuration=fold_configuration
                     )
 
@@ -425,8 +376,11 @@ class TransferlearningManager:
                         result["log"] += "Transfer-learning dataset could not be generated."
 
                 tl_train_metrics, tl_test_metrics = self._kg_training_workflow(
-                    fold_configuration=fold_configuration
+                    fold_configuration=fold_configuration,
+                    weights_file_path=weights_file_path
                 )
+
+                os.remove(weights_file_path)
 
                 self._dataset.reset_source_data()
 
@@ -473,9 +427,9 @@ class TransferlearningManager:
         }
 
         kg_tl_out = self.kg_transfer_learning()
-        #default_tl_out = self.default_transfer_learning()
+        default_tl_out = self.default_transfer_learning()
 
-        #results["default_transfer_learning_results"] = default_tl_out
+        results["default_transfer_learning_results"] = default_tl_out
         results["kg_transfer_learning_results"] = kg_tl_out
         
         # Salva os resultados em arquivo JSON

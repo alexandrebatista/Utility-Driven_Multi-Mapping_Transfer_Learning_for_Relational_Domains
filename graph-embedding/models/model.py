@@ -15,7 +15,7 @@ def load_model(pickle_path):
 
 class RdnBoost:
 
-    def __init__(self, target_domain_metadata, model_settings=None, prefix_path="./", name=None):
+    def __init__(self, target_domain_metadata, weights_file_path: str = None, model_settings=None, prefix_path="./", name=None):
         self._model = None
         self._name = name
 
@@ -30,6 +30,8 @@ class RdnBoost:
         self._test_output_path = os.path.join(self._rdn_boost_path, "bsrl_data/data0", "test_output.txt")
 
         self._model_settings = model_settings if model_settings is not None else {}
+
+        self._weights_file_path = weights_file_path
 
         print(self._model_settings)
 
@@ -50,7 +52,9 @@ class RdnBoost:
             rdn_version=self._model_settings.get("rdn_version", "rdn"),
             no_boost=self._model_settings.get("no_boost", False),
             disable_limiters=self._model_settings.get("disable_limiters", False),
-            path=self._rdn_boost_path
+            path=self._rdn_boost_path,
+            weights=self._weights_file_path
+
         )
 
     def train(self, domain_data):
