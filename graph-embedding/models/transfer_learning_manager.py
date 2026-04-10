@@ -112,12 +112,10 @@ class TransferlearningManager:
 
     def _get_transfer_dataset(self, fold_configuration):
         """
-        Versão Definitiva: Soft-Attention Relacional com Modulador Epistêmico e Arquivo Único.
-        - Preserva 100% da topologia (sem pruning ou oversampling relacional).
-        - Pesos baseados em Consistência Semântica (Target vs. Gabarito do Source).
-        - Bypass automático em caso de colapso do Target (Cold-Start).
-        - Normalização de volume estratificada (proteção de classes minoritárias).
-        - Exporta um ÚNICO arquivo de pesos consolidado para o Java.
+        Versão Definitiva Contínua: Soft-Attention Relacional Dinâmica.
+        - Elimina 'magic numbers' (If/Else) usando interpolação matemática baseada em AUC-PR.
+        - Modulação Epistêmica e Bypass ocorrem naturalmente pela equação diferencial de pesos.
+        - Mantém a proteção Anti-Esmagamento via limite de volume lambda.
         """
         from collections import defaultdict
         import os
@@ -150,30 +148,29 @@ class TransferlearningManager:
         )
         scorer_model.train(train_target_data)
 
-        # Avalia a competência do Target para calibrar o rigor do filtro
+        # Avalia a competência do Target (PR)
         scorer_model.test(validation_target_data)
         oracle_metrics = scorer_model.get_test_metrics()
-        oracle_pr = oracle_metrics.get("auc_pr", 0.5)
+        
+        # PR = AUC-PR (Garantindo limites entre 0.0 e 1.0)
+        oracle_pr = max(0.0, min(1.0, oracle_metrics.get("auc_pr", 0.5)))
+        
+        # Grau de Confiança (PR ao quadrado gera uma curva de cautela melhor)
+        beta = 1.75
+        confidence_factor = oracle_pr ** beta
 
-        # Definição do Modulador Epistêmico (Teto de Impacto e Bypass)
-        if oracle_pr >= 0.75:
-            oracle_status = "ESPECIALISTA"
-            max_impact_ratio = 0.5  # Source atua apenas como assistente (Max 50%)
-        elif oracle_pr >= 0.60:
-            oracle_status = "MEDIANO"
-            max_impact_ratio = 1.0  # Paridade de volume (1:1), com filtro de consistência
-        else:
-            oracle_status = "COLAPSO_TARGET (Bypass Ativado)"
-            max_impact_ratio = 1.0  # Paridade de volume (1:1), SEM filtro (aceita tudo do Source com peso 1.0)
+        # Equação 1: Teto de Impacto Contínuo (Lambda)
+        # Varia suavemente de 1.0 (Bypass/Ingênuo) até 0.5 (Especialista)
+        max_impact_ratio = 1.0 - (0.5 * confidence_factor)
 
-        print(f"   -> Status: {oracle_status} | AUC-PR: {oracle_pr:.4f} | Teto de Impacto: {max_impact_ratio}x")
+        print(f"   -> AUC-PR: {oracle_pr:.4f} | Parâmetro de Decaimento Epistêmico: {beta:.4f} | Fator de Confiança: {confidence_factor:.4f} | Teto Contínuo (Lambda): {max_impact_ratio:.4f}x")
 
         # =====================================================================
-        # DICIONÁRIO GLOBAL DE PESOS (Para o arquivo único)
+        # DICIONÁRIO GLOBAL DE PESOS
         # =====================================================================
         global_instance_weights = {}
 
-        # 3.1. Âncora do Target (Peso Absoluto 1.0 para os dados nativos)
+        # 3.1. Âncora do Target (Peso Absoluto 1.0 para dados nativos)
         for pos_inst in train_target_data["pos"]:
             global_instance_weights[pos_inst] = 1.0
         for neg_inst in train_target_data["neg"]:
@@ -192,42 +189,33 @@ class TransferlearningManager:
             raw_source_weight_sum_neg = 0.0
             pos_source_set = set(mapped_data["pos"])
 
-            # 3.2. Bypass ou Avaliação do Oráculo
-            if oracle_status == "COLAPSO_TARGET (Bypass Ativado)":
-                print(f"   [{source_domain_name}] Bypass: Transferindo Source com peso total 1.0.")
-                for raw_instance in mapped_data["pos"]:
-                    source_raw_weights_pos[raw_instance] = 1.0
-                    raw_source_weight_sum_pos += 1.0
-                for raw_instance in mapped_data["neg"]:
-                    source_raw_weights_neg[raw_instance] = 1.0
-                    raw_source_weight_sum_neg += 1.0
-            else:
-                scorer_model.test(mapped_data)
-                try:
-                    estimates = scorer_model.load_estimates()
-                except Exception as e:
-                    print(f"   [ERRO] Falha ao carregar estimates: {e}")
-                    continue
+            # Testa as instâncias mapeadas no Oráculo
+            scorer_model.test(mapped_data)
+            try:
+                estimates = scorer_model.load_estimates()
+            except Exception as e:
+                print(f"   [ERRO] Falha ao carregar estimates: {e}")
+                continue
 
-                for est in estimates:
-                    raw_instance = est["raw"]
-                    consistency = est["score"]
+            # 3.2. Ponderação Contínua (Equação da Lacuna)
+            for est in estimates:
+                raw_instance = est["raw"]
+                c_i = est["score"] # Consistência avaliada pelo oráculo
 
-                    if oracle_status == "ESPECIALISTA":
-                        w = consistency if consistency >= 0.7 else 0.01
-                    else:  # MEDIANO
-                        w = consistency if consistency >= 0.6 else (0.05 if consistency <= 0.4 else 0.5)
+                # Equação 2: Interpolação suave entre a opinião do Oráculo e a Transferência Ingênua (1.0)
+                w = (confidence_factor * c_i) + ((1.0 - confidence_factor) * 1.0)
+                
+                # Garante um piso mínimo para a topologia do grafo não colapsar
+                w = max(w, 0.01)
 
-                    w = max(w, 0.01)
+                if raw_instance in pos_source_set:
+                    source_raw_weights_pos[raw_instance] = w
+                    raw_source_weight_sum_pos += w
+                else:
+                    source_raw_weights_neg[raw_instance] = w
+                    raw_source_weight_sum_neg += w
 
-                    if raw_instance in pos_source_set:
-                        source_raw_weights_pos[raw_instance] = w
-                        raw_source_weight_sum_pos += w
-                    else:
-                        source_raw_weights_neg[raw_instance] = w
-                        raw_source_weight_sum_neg += w
-
-            # 3.3. Normalização Estratificada de Volume
+            # 3.3. Normalização Estratificada de Volume (Escudo Anti-Esmagamento)
             target_pos_weight = float(len(train_target_data["pos"]))
             target_neg_weight = float(len(train_target_data["neg"]))
 
@@ -242,7 +230,7 @@ class TransferlearningManager:
             if raw_source_weight_sum_neg > max_allowed_source_neg and raw_source_weight_sum_neg > 0:
                 scaling_factor_neg = max_allowed_source_neg / raw_source_weight_sum_neg
 
-            # Salva no dicionário GLOBAL
+            # Salva no dicionário GLOBAL aplicando a escala
             for inst, w in source_raw_weights_pos.items():
                 global_instance_weights[inst] = max(w * scaling_factor_pos, 0.001)
 
@@ -251,7 +239,7 @@ class TransferlearningManager:
 
             print(f"   [{source_domain_name}] Scaling POS: {scaling_factor_pos:.4f} | NEG: {scaling_factor_neg:.4f}")
 
-            # Salva os dados no dataset de transferência
+            # Salva os dados
             transfer_dataset[source_domain_name][mapping_key] = {
                 "facts": mapped_data["facts"],
                 "pos": mapped_data["pos"],
@@ -262,7 +250,6 @@ class TransferlearningManager:
         weights_dir = os.path.join(self._base_path, "weights")
         os.makedirs(weights_dir, exist_ok=True)
 
-        # O nome do arquivo agora reflete apenas o Target e o Fold (já que unifica as origens)
         single_weights_file_path = os.path.join(weights_dir, f"weights_global_{self._target_domain_name}_{fold_id}.txt")
 
         with open(single_weights_file_path, "w") as f:
