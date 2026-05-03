@@ -122,20 +122,6 @@ class TransferlearningManager:
         import os
         import math
 
-        def get_unique_filename(filepath):
-            if not os.path.exists(filepath):
-                return filepath
-
-            base, ext = os.path.splitext(filepath)
-            counter = 1
-
-            new_filepath = f"{base}_{counter}{ext}"
-            while os.path.exists(new_filepath):
-                counter += 1
-                new_filepath = f"{base}_{counter}{ext}"
-
-            return new_filepath
-
         transfer_dataset = defaultdict(dict)
 
         # ---------- 1. PREPARAÇÃO DOS DADOS ----------
@@ -215,7 +201,7 @@ class TransferlearningManager:
 
             # 3.2. Ponderação Contínua usando Generalized Focal Loss (GFL)
             # Parâmetros GFL mapeados
-            gamma = 0.33  # Hardcoded conforme especificação
+            gamma = 0.5  # Hardcoded conforme especificação
             gfl_lambda = oracle_pr  # Lambda atrelado diretamente à AUC-PR
 
             for est in estimates:
@@ -285,13 +271,6 @@ class TransferlearningManager:
         os.makedirs(weights_dir, exist_ok=True)
 
         single_weights_file_path = os.path.join(weights_dir, f"weights_global_{self._target_domain_name}_{fold_id}.txt")
-
-        weights_round_path = os.path.join(weights_dir, f"{fold_id}.txt")
-        weights_round_path = get_unique_filename(weights_round_path)
-
-        with open(weights_round_path, "w") as f:
-            for inst, w in global_instance_weights.items():
-                f.write(f"{inst}\t{w:.6f}\n")
 
         with open(single_weights_file_path, "w") as f:
             for inst, w in global_instance_weights.items():
