@@ -2,13 +2,13 @@ import os
 import json
 from collections import defaultdict
 
-from database.utils import graph_data_to_database, raw_data_to_database, convert_to_prolog_data, convert_datatomap_to_prologdata
+from database.utils import graph_data_to_database, raw_data_to_database, convert_to_prolog_data, \
+    convert_datatomap_to_prologdata
 from database.database import DatabaseWrapper
 from mapping.apply_mappings import read_source_domain_and_apply_mapping
 from mapping.utils import select_mappings
 from .model import RdnBoost
 from .selector_model import SelectorModel
-
 
 no_recursion_datasets = ["cora", "imdb", "uwcse"]
 
@@ -112,13 +112,29 @@ class TransferlearningManager:
 
     def _get_transfer_dataset(self, fold_configuration):
         """
-        Versão Definitiva Contínua: Soft-Attention Relacional Dinâmica.
-        - Elimina 'magic numbers' (If/Else) usando interpolação matemática baseada em AUC-PR.
-        - Modulação Epistêmica e Bypass ocorrem naturalmente pela equação diferencial de pesos.
-        - Mantém a proteção Anti-Esmagamento via limite de volume lambda.
+        Versão Definitiva: Transferência Epistêmica usando Generalized Focal Loss (GFL).
+        - O peso da instância é calculado via GFL.
+        - Gamma fixo para supressão de redundância.
+        - Lambda dinâmico baseado na AUC-PR do domínio alvo.
+        - Alpha (Balanço de Classes/Volume) é gerido pela Normalização Estratificada.
         """
         from collections import defaultdict
         import os
+        import math
+
+        def get_unique_filename(filepath):
+            if not os.path.exists(filepath):
+                return filepath
+
+            base, ext = os.path.splitext(filepath)
+            counter = 1
+
+            new_filepath = f"{base}_{counter}{ext}"
+            while os.path.exists(new_filepath):
+                counter += 1
+                new_filepath = f"{base}_{counter}{ext}"
+
+            return new_filepath
 
         transfer_dataset = defaultdict(dict)
 
@@ -151,19 +167,19 @@ class TransferlearningManager:
         # Avalia a competência do Target (PR)
         scorer_model.test(validation_target_data)
         oracle_metrics = scorer_model.get_test_metrics()
-        
+
         # PR = AUC-PR (Garantindo limites entre 0.0 e 1.0)
         oracle_pr = max(0.0, min(1.0, oracle_metrics.get("auc_pr", 0.5)))
-        
-        # Grau de Confiança (PR ao quadrado gera uma curva de cautela melhor)
-        beta = 1.75
-        confidence_factor = oracle_pr ** beta
 
-        # Equação 1: Teto de Impacto Contínuo (Lambda)
-        # Varia suavemente de 1.0 (Bypass/Ingênuo) até 0.5 (Especialista)
+        # Grau de Confiança
+        # beta = 1.75
+        confidence_factor = oracle_pr  # ** beta
+
+        # Equação 1: Teto de Impacto Contínuo
         max_impact_ratio = 1.0 - (0.5 * confidence_factor)
 
-        print(f"   -> AUC-PR: {oracle_pr:.4f} | Parâmetro de Decaimento Epistêmico: {beta:.4f} | Fator de Confiança: {confidence_factor:.4f} | Teto Contínuo (Lambda): {max_impact_ratio:.4f}x")
+        print(
+            f"   -> AUC-PR: {oracle_pr:.4f} | Fator de Confiança: {confidence_factor:.4f} | Teto Contínuo: {max_impact_ratio:.4f}x")
 
         # =====================================================================
         # DICIONÁRIO GLOBAL DE PESOS
@@ -176,7 +192,7 @@ class TransferlearningManager:
         for neg_inst in train_target_data["neg"]:
             global_instance_weights[neg_inst] = 1.0
 
-        # ---------- 3. AVALIAÇÃO DAS ORIGENS (SOURCES) ----------
+        # ---------- 3. AVALIAÇÃO DAS ORIGENS (SOURCES) COM GFL ----------
         for mapping_key, mapped_data in self._source_domains.items():
             source_domain_name = self._selected_mappings[mapping_key]["source"]
 
@@ -197,14 +213,32 @@ class TransferlearningManager:
                 print(f"   [ERRO] Falha ao carregar estimates: {e}")
                 continue
 
-            # 3.2. Ponderação Contínua (Equação da Lacuna)
+            # 3.2. Ponderação Contínua usando Generalized Focal Loss (GFL)
+            # Parâmetros GFL mapeados
+            gamma = 0.33  # Hardcoded conforme especificação
+            gfl_lambda = oracle_pr  # Lambda atrelado diretamente à AUC-PR
+
             for est in estimates:
                 raw_instance = est["raw"]
-                c_i = est["score"] # Consistência avaliada pelo oráculo
+                c_i = est["score"]  # O 'p' da GFL: Consistência avaliada pelo oráculo
 
-                # Equação 2: Interpolação suave entre a opinião do Oráculo e a Transferência Ingênua (1.0)
-                w = (confidence_factor * c_i) + ((1.0 - confidence_factor) * 1.0)
-                
+                # Proteção matemática para evitar log(0) ou divisão por zero estrita
+                c_i_safe = max(min(c_i, 1.0 - 1e-6), 1e-6)
+
+                # Núcleo da GFL (Tsallis/Box-Cox base)
+                if gfl_lambda < 1e-4:
+                    # Regra de L'Hôpital: Se AUC-PR ~ 0, a curva assume o formato de Cross-Entropy Padrão
+                    gfl_core = -math.log(c_i_safe)
+                else:
+                    # Formato GFL padrão
+                    gfl_core = (1.0 - (c_i_safe ** gfl_lambda)) / gfl_lambda
+
+                # Peso final da GFL focado pela dificuldade
+                gfl_weight = ((1.0 - c_i_safe) ** gamma) * gfl_core
+
+                # Interpolação Epistêmica: Avalia o peso GFL vs Transferência Ingênua baseada na confiança
+                w = (confidence_factor * gfl_weight) + ((1.0 - confidence_factor) * 1.0)
+
                 # Garante um piso mínimo para a topologia do grafo não colapsar
                 w = max(w, 0.01)
 
@@ -215,7 +249,7 @@ class TransferlearningManager:
                     source_raw_weights_neg[raw_instance] = w
                     raw_source_weight_sum_neg += w
 
-            # 3.3. Normalização Estratificada de Volume (Escudo Anti-Esmagamento)
+            # 3.3. Normalização Estratificada de Volume (O Parâmetro Alpha da GFL atuando globalmente)
             target_pos_weight = float(len(train_target_data["pos"]))
             target_neg_weight = float(len(train_target_data["neg"]))
 
@@ -230,7 +264,7 @@ class TransferlearningManager:
             if raw_source_weight_sum_neg > max_allowed_source_neg and raw_source_weight_sum_neg > 0:
                 scaling_factor_neg = max_allowed_source_neg / raw_source_weight_sum_neg
 
-            # Salva no dicionário GLOBAL aplicando a escala
+            # Aplicação do "Alpha" global e salvamento no dicionário
             for inst, w in source_raw_weights_pos.items():
                 global_instance_weights[inst] = max(w * scaling_factor_pos, 0.001)
 
@@ -251,6 +285,13 @@ class TransferlearningManager:
         os.makedirs(weights_dir, exist_ok=True)
 
         single_weights_file_path = os.path.join(weights_dir, f"weights_global_{self._target_domain_name}_{fold_id}.txt")
+
+        weights_round_path = os.path.join(weights_dir, f"{fold_id}.txt")
+        weights_round_path = get_unique_filename(weights_round_path)
+
+        with open(weights_round_path, "w") as f:
+            for inst, w in global_instance_weights.items():
+                f.write(f"{inst}\t{w:.6f}\n")
 
         with open(single_weights_file_path, "w") as f:
             for inst, w in global_instance_weights.items():
@@ -289,7 +330,7 @@ class TransferlearningManager:
 
         return train_metrics, test_metrics
 
-    def default_transfer_learning(self, rounds:int = 3):
+    def default_transfer_learning(self, rounds: int = 3):
         out = []
 
         data = defaultdict(dict)
@@ -381,15 +422,15 @@ class TransferlearningManager:
     def _save_results(self, results):
         """Salva os resultados do transfer learning em um arquivo JSON."""
         import shutil
-        
+
         results_dir = os.path.join(self._base_path, "results")
         os.makedirs(results_dir, exist_ok=True)
-        
+
         source_domains = "_".join(results["source"])
         mapping_ids = "-".join(self._selected_mappings.keys())
         base_filename = f"{source_domains}_{self._target_domain_name}_{mapping_ids}.json"
         filepath = os.path.join(results_dir, base_filename)
-        
+
         # Se arquivo já existe, adiciona número no final
         if os.path.exists(filepath):
             counter = 1
@@ -397,10 +438,10 @@ class TransferlearningManager:
             while os.path.exists(os.path.join(results_dir, f"{name}_{counter}{ext}")):
                 counter += 1
             filepath = os.path.join(results_dir, f"{name}_{counter}{ext}")
-        
+
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
-        
+
         print(f"Resultados salvos em: {filepath}")
         return filepath
 
@@ -418,8 +459,8 @@ class TransferlearningManager:
 
         results["default_transfer_learning_results"] = default_tl_out
         results["kg_transfer_learning_results"] = kg_tl_out
-        
+
         # Salva os resultados em arquivo JSON
         self._save_results(results)
-        
+
         return results
