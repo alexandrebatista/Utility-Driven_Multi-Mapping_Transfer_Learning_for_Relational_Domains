@@ -110,12 +110,11 @@ class TransferlearningManager:
             self._dataset.get_target_domain_metadata()
         )
 
-    def _get_transfer_dataset(self, fold_configuration):
+    def _get_transfer_dataset(self, fold_configuration, sample_multiplier=2.0):
         """
         Versão Definitiva: Transferência Epistêmica usando Generalized Focal Loss (GFL).
         - O peso da instância é calculado via GFL.
-        - Gamma fixo para supressão de redundância.
-        - Lambda dinâmico baseado na AUC-PR do domínio alvo.
+        - Redução de amostras (Top-K por peso) se houver múltiplos mapeamentos.
         - Alpha (Balanço de Classes/Volume) é gerido pela Normalização Estratificada.
         """
         from collections import defaultdict
@@ -158,8 +157,7 @@ class TransferlearningManager:
         oracle_pr = max(0.0, min(1.0, oracle_metrics.get("auc_pr", 0.5)))
 
         # Grau de Confiança
-        # beta = 1.75
-        confidence_factor = oracle_pr  # ** beta
+        confidence_factor = oracle_pr
 
         # Equação 1: Teto de Impacto Contínuo
         max_impact_ratio = 1.0 - (0.5 * confidence_factor)
@@ -179,6 +177,8 @@ class TransferlearningManager:
             global_instance_weights[neg_inst] = 1.0
 
         # ---------- 3. AVALIAÇÃO DAS ORIGENS (SOURCES) COM GFL ----------
+        num_mappings = len(self._source_domains)
+
         for mapping_key, mapped_data in self._source_domains.items():
             source_domain_name = self._selected_mappings[mapping_key]["source"]
 
@@ -200,32 +200,22 @@ class TransferlearningManager:
                 continue
 
             # 3.2. Ponderação Contínua usando Generalized Focal Loss (GFL)
-            # Parâmetros GFL mapeados
-            gamma = 0.5  # Hardcoded conforme especificação
-            gfl_lambda = oracle_pr  # Lambda atrelado diretamente à AUC-PR
+            gamma = 0.5
+            gfl_lambda = oracle_pr
 
             for est in estimates:
                 raw_instance = est["raw"]
-                c_i = est["score"]  # O 'p' da GFL: Consistência avaliada pelo oráculo
+                c_i = est["score"]
 
-                # Proteção matemática para evitar log(0) ou divisão por zero estrita
                 c_i_safe = max(min(c_i, 1.0 - 1e-6), 1e-6)
 
-                # Núcleo da GFL (Tsallis/Box-Cox base)
                 if gfl_lambda < 1e-4:
-                    # Regra de L'Hôpital: Se AUC-PR ~ 0, a curva assume o formato de Cross-Entropy Padrão
                     gfl_core = -math.log(c_i_safe)
                 else:
-                    # Formato GFL padrão
                     gfl_core = (1.0 - (c_i_safe ** gfl_lambda)) / gfl_lambda
 
-                # Peso final da GFL focado pela dificuldade
                 gfl_weight = ((1.0 - c_i_safe) ** gamma) * gfl_core
-
-                # Interpolação Epistêmica: Avalia o peso GFL vs Transferência Ingênua baseada na confiança
                 w = (confidence_factor * gfl_weight) + ((1.0 - confidence_factor) * 1.0)
-
-                # Garante um piso mínimo para a topologia do grafo não colapsar
                 w = max(w, 0.01)
 
                 if raw_instance in pos_source_set:
@@ -235,12 +225,12 @@ class TransferlearningManager:
                     source_raw_weights_neg[raw_instance] = w
                     raw_source_weight_sum_neg += w
 
-            # 3.3. Normalização Estratificada de Volume (O Parâmetro Alpha da GFL atuando globalmente)
-            target_pos_weight = float(len(train_target_data["pos"]))
-            target_neg_weight = float(len(train_target_data["neg"]))
+            # 3.3. Normalização Estratificada de Volume
+            target_pos_count = len(train_target_data["pos"])
+            target_neg_count = len(train_target_data["neg"])
 
-            max_allowed_source_pos = target_pos_weight * max_impact_ratio
-            max_allowed_source_neg = target_neg_weight * max_impact_ratio
+            max_allowed_source_pos = float(target_pos_count) * max_impact_ratio
+            max_allowed_source_neg = float(target_neg_count) * max_impact_ratio
 
             scaling_factor_pos = 1.0
             if raw_source_weight_sum_pos > max_allowed_source_pos and raw_source_weight_sum_pos > 0:
@@ -250,20 +240,44 @@ class TransferlearningManager:
             if raw_source_weight_sum_neg > max_allowed_source_neg and raw_source_weight_sum_neg > 0:
                 scaling_factor_neg = max_allowed_source_neg / raw_source_weight_sum_neg
 
-            # Aplicação do "Alpha" global e salvamento no dicionário
-            for inst, w in source_raw_weights_pos.items():
-                global_instance_weights[inst] = max(w * scaling_factor_pos, 0.001)
+            # Preparação para redução de amostras (Ranking)
+            # Aplicamos o scaling individual para decidir quem são os melhores
+            final_source_weights_pos = {inst: max(w * scaling_factor_pos, 0.001) for inst, w in
+                                        source_raw_weights_pos.items()}
+            final_source_weights_neg = {inst: max(w * scaling_factor_neg, 0.001) for inst, w in
+                                        source_raw_weights_neg.items()}
 
-            for inst, w in source_raw_weights_neg.items():
-                global_instance_weights[inst] = max(w * scaling_factor_neg, 0.001)
+            # ---------- 3.4. REDUÇÃO BASEADA NO MULTIPLIER ----------
+            selected_pos = list(final_source_weights_pos.keys())
+            selected_neg = list(final_source_weights_neg.keys())
+
+            if num_mappings > 1:
+                limit_pos = math.ceil(target_pos_count * sample_multiplier)
+                limit_neg = math.ceil(target_neg_count * sample_multiplier)
+
+                if len(selected_pos) > limit_pos:
+                    selected_pos = sorted(selected_pos, key=lambda x: final_source_weights_pos[x], reverse=True)[
+                                   :limit_pos]
+
+                if len(selected_neg) > limit_neg:
+                    selected_neg = sorted(selected_neg, key=lambda x: final_source_weights_neg[x], reverse=True)[
+                                   :limit_neg]
+
+                print(f"   [{source_domain_name}] Redução aplicada: POS {len(selected_pos)} | NEG {len(selected_neg)}")
+
+            # Adiciona apenas as instâncias selecionadas ao dicionário global de pesos
+            for inst in selected_pos:
+                global_instance_weights[inst] = final_source_weights_pos[inst]
+            for inst in selected_neg:
+                global_instance_weights[inst] = final_source_weights_neg[inst]
 
             print(f"   [{source_domain_name}] Scaling POS: {scaling_factor_pos:.4f} | NEG: {scaling_factor_neg:.4f}")
 
-            # Salva os dados
+            # Salva os dados no dataset de transferência (apenas as selecionadas)
             transfer_dataset[source_domain_name][mapping_key] = {
                 "facts": mapped_data["facts"],
-                "pos": mapped_data["pos"],
-                "neg": mapped_data["neg"]
+                "pos": selected_pos,
+                "neg": selected_neg
             }
 
         # ---------- 4. EXPORTAÇÃO DO ARQUIVO ÚNICO DE PESOS ----------
