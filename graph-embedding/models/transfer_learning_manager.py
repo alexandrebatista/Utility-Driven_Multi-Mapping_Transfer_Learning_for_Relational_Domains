@@ -2,13 +2,13 @@ import os
 import json
 from collections import defaultdict
 
-from database.utils import graph_data_to_database, raw_data_to_database, convert_to_prolog_data, convert_datatomap_to_prologdata
+from database.utils import graph_data_to_database, raw_data_to_database, convert_to_prolog_data, \
+    convert_datatomap_to_prologdata
 from database.database import DatabaseWrapper
 from mapping.apply_mappings import read_source_domain_and_apply_mapping
 from mapping.utils import select_mappings
-from .model import RdnBoost, load_model
-from .selector_model import SelectorModel, generate_selector_model
-
+from .model import RdnBoost
+from .selector_model import SelectorModel
 
 no_recursion_datasets = ["cora", "imdb", "uwcse"]
 
@@ -28,50 +28,13 @@ class TransferlearningManager:
         self._dataset = DatabaseWrapper()
         self._dataset.process_target(self._target_domain_path, target_domain_name)
         self._target_domain_metadata = self._dataset.get_target_domain_metadata()
-        self._folds_split = self._dataset.generate_fold_splits()
+        self._folds_split = self._dataset.generate_fold_splits(use_validation=True)
 
         self._mappings_path = os.path.join("./mappings", f"{target_domain_name}.json")
 
         self._source_domains = None
         self._selected_mappings = None
-
-        self._best_models_found_path = os.path.join(self._base_path, f"best_models_found.json")
-        self._best_models_found = self._load_best_models_found()
-
-    def _load_best_models_found(self):
-        best_models_found = {}
-
-        folds = sorted(
-            [d for d in os.listdir(os.path.join(DATASETS_PATH, self._target_domain_name)) if d.startswith("fold")]
-        )
-
-        if os.path.exists(self._best_models_found_path):
-            with open(self._best_models_found_path, 'r') as f:
-                try:
-                    best_models_found = json.load(f)
-                except json.JSONDecodeError:
-                    pass
-
-            if self._target_domain_name in best_models_found:
-                return best_models_found
-
-        best_models_found.update({
-            self._target_domain_name: {fold: 0 for fold in folds}
-        })
-
-        with open(self._best_models_found_path, 'w') as f:
-            json.dump(best_models_found, f, indent=4)
-
-        return best_models_found
-
-    def _update_best_models_found(self, fold, best_model_was_found):
-        self._best_models_found[self._target_domain_name][fold] = 1 if best_model_was_found else -1
-
-        with open(self._best_models_found_path, 'w') as f:
-            json.dump(self._best_models_found, f, indent=4)
-
-    def _best_model_was_not_found(self, fold):
-        return self._best_models_found[self._target_domain_name][fold] == -1
+        self.gamma = 0.5
 
     def select_mappings(self, number_of_mappings, source_domain_name=None):
         with open(self._mappings_path, "r", encoding="utf-8") as f:
@@ -82,6 +45,9 @@ class TransferlearningManager:
 
     def set_mappings(self, selected_mappings):
         self.reset(selected_mappings)
+
+    def set_gamma(self, gamma):
+        self.gamma = gamma
 
     def reset(self, selected_mappings):
         self._selected_mappings = selected_mappings
@@ -96,7 +62,7 @@ class TransferlearningManager:
 
             source_domain_converted_data = convert_datatomap_to_prologdata(source_domain_mapped_data)
 
-            mapped_data = {mapping_key: source_domain_converted_data}
+            mapped_data[mapping_key] = source_domain_converted_data
 
         return mapped_data
 
@@ -110,394 +76,196 @@ class TransferlearningManager:
             self._dataset.get_target_domain_metadata()
         )
 
-    def get_knowledge_gap_data(self, fold_configuration):
-        if self._best_model_was_not_found(fold_configuration["train"][0]):
-            return None, None
-
-        best_model = self._search_target_best_model(fold_configuration)
-
-        if best_model is None:
-            return None, None
-
-        filtered_samples = best_model.process_data(min_fraction=0.01, score_threshold=0.5)
-
-        knowledge_gap_data = {
-            "pos": [item["raw"] for item in filtered_samples["pos_below"]],
-            "neg": [item["raw"] for item in filtered_samples["neg_below"]],
-            **self._dataset.get_target_facts(fold_configuration["train"]),
-        }
-
-        knowledge_data = {
-            "pos": [item["raw"] for item in filtered_samples["pos_above"]],
-            "neg": [item["raw"] for item in filtered_samples["neg_above"]],
-            **self._dataset.get_target_facts(fold_configuration["train"]),
-        }
-
-        if len(knowledge_gap_data["pos"]) == 0 or len(knowledge_gap_data["neg"]) == 0:
-            return None, knowledge_data
-
-        return knowledge_gap_data, knowledge_data
-
-    def _search_target_best_model(self, fold_configuration, save=True):
-        from pathlib import Path
-
-        name = f"best_model_{self._target_domain_name}_{fold_configuration['train'][0]}"
-        path = Path(os.path.join(self._base_path, f"selector_models/pkl/", f"{name}.pkl"))
-
-        if path.exists():
-            return load_model(path)
-
-        dataset_metadata = self._dataset.get_target_domain_metadata()
-
-        train_dataset = self._dataset.generate_train_srldatabase(
-            fold_configuration["train"],
-            use_recursion=self._target_uses_recursion
-        )
-
-        model_settings = {"disable_limiters": True}
-
-        number_trees_list = [10, 50, 100]
-        max_tree_depth_list = [3, 8]
-
-        for number_trees in number_trees_list:
-            model_settings["nEstimators"] = number_trees
-
-            for max_tree_depth in max_tree_depth_list:
-                model_settings["maxTreeDepth"] = max_tree_depth
-
-                model = RdnBoost(
-                    target_domain_metadata=dataset_metadata,
-                    model_settings=model_settings,
-                    prefix_path=self._base_path,
-                    name=name
-                )
-
-                model.train(train_dataset)
-
-                pos_acc, neg_acc = model.get_train_accuracies(0.5)
-
-                print(
-                    f"{str(number_trees)}:{str(max_tree_depth)} - Positive Accuracy: {str(pos_acc)}. Negative Accuracy: {str(neg_acc)}")
-
-                if pos_acc > 0.5 and neg_acc > 0.5:
-                    if save:
-                        model.save()
-                    print("Model found!")
-                    print(number_trees)
-                    print(max_tree_depth)
-                    self._update_best_models_found(fold_configuration['train'][0], True)
-                    return model
-                model.delete()
-
-        self._update_best_models_found(fold_configuration['train'][0], False)
-        return None
-
-    import math
-    import random
-
-    def _get_transfer_dataset_2(self, knowledge_gap_data, knowledge_data):
+    def _get_transfer_dataset(self, fold_configuration, sample_percentage=0.5, round_idx=0):
         """
-        Realiza Transfer Learning baseada em instâncias.
-        Usa um modelo RDN-Boost como ferramenta para identificar subgrafos no Source
-        que são estruturalmente similares ao Gap do Target.
+        Versão Corrigida:
+        1. Calcula pesos GFL (qualidade individual).
+        2. Aplica Redução Global (mantém apenas os melhores % do pool).
+        3. Normaliza o Volume (Alpha) apenas sobre os sobreviventes.
         """
-
-        import random
+        from collections import defaultdict
+        import os
         import math
+        import json
 
-        # =========================================================================
-        # 0. FUNÇÕES AUXILIARES INTERNAS
-        # =========================================================================
-
-        def extract_args(predicate_str):
-            """
-            Parser robusto.
-            Entrada: 'samevenue(src_paper_1, src_venue_A)'
-            Saída: ['src_paper_1', 'src_venue_A']
-            """
-            try:
-                if "(" not in predicate_str: return []
-                content = predicate_str.split("(")[1].replace(")", "")
-                return [x.strip() for x in content.split(",")]
-            except IndexError:
-                return []
-
-        def extract_entities_as_target(fact_list, predicate_name="is_gap"):
-            """
-            Transforma lista de relações em lista de alvos de entidade.
-            Ex: ['samevenue(a,b)'] -> ['is_gap(a)', 'is_gap(b)']
-            """
-            entities = set()
-            for fact in fact_list:
-                args = extract_args(fact)
-                for arg in args:
-                    entities.add(arg)
-            return [f"{predicate_name}({entity})" for entity in entities]
-
-        def parse_entities_from_preds(pred_list):
-            """
-            Reverte a predição da ferramenta para IDs puros.
-            Entrada: ['is_gap(src_a)', 'is_gap(src_b)'] -> Saída: {'src_a', 'src_b'}
-            """
-            entities = set()
-            for pred in pred_list:
-                args = extract_args(pred)
-                if args:
-                    entities.add(args[0])
-            return entities
-
-        def filter_relations_by_entities(relation_list, selected_entities, strict=True):
-            """
-            Reconstrói as amostras relacionais originais (samevenue).
-            Strict=True: Só aceita se AMBOS os argumentos foram selecionados.
-            """
-            selected_samples = []
-            selected_set = set(selected_entities)  # Set para busca O(1)
-
-            for relation in relation_list:
-                args = extract_args(relation)
-                if len(args) < 2: continue
-
-                arg1, arg2 = args[0], args[1]
-
-                if strict:
-                    if arg1 in selected_set and arg2 in selected_set:
-                        selected_samples.append(relation)
-                else:
-                    if arg1 in selected_set or arg2 in selected_set:
-                        selected_samples.append(relation)
-
-            return selected_samples
-
-        # =========================================================================
-        # 1. CÁLCULO DE COTAS (RATIO 0.2 + REGRA 2:1)
-        # =========================================================================
-
-        current_gap_pos = len(knowledge_gap_data["pos"])
-        current_know_pos = len(knowledge_data["pos"])
-        total_pos_current = current_gap_pos + current_know_pos
-
-        ratio = 0.2
-
-        # Fórmula: x = (Ratio * Total - Gap) / (1 - Ratio)
-        if total_pos_current > 0:
-            numerator = (ratio * total_pos_current) - current_gap_pos
-            denom = (1 - ratio)
-            needed_pos = math.ceil(numerator / denom) if denom != 0 else 0
-            needed_pos = max(0, needed_pos)
-        else:
-            needed_pos = 10  # Fallback se dataset for vazio
-
-        needed_neg = needed_pos * 2
-
-        print(f"[Transfer] Meta: Buscar {needed_pos} Positivos e {needed_neg} Negativos no Source.")
-
-        if needed_pos == 0:
-            return {"facts": [], "pos": [], "neg": []}
-
-        # =========================================================================
-        # 2. ITERAÇÃO E EXECUÇÃO DA FERRAMENTA
-        # =========================================================================
-
-        final_transfer_facts = []
-        final_transfer_pos = []
-        final_transfer_neg = []
-
-        # O Treino POSITIVO da ferramenta são sempre as entidades do GAP
-        # (Queremos aprender a estrutura delas)
-        gap_targets_raw = knowledge_gap_data["pos"] + knowledge_gap_data["neg"]
-        tool_train_pos = extract_entities_as_target(gap_targets_raw, "is_gap")
-
-        for mapping_key, mapped_data in self._source_domains.items():
-            valid_predicates = [
-                predicate for predicate in list(self._selected_mappings[mapping_key]["predicate_mappings"].values())
-                if predicate is not None
-            ]
-
-            # --- A. PREPARAÇÃO DO DATASET UNIFICADO ---
-
-            # O Treino NEGATIVO da ferramenta é uma amostra do SOURCE
-            source_targets_raw = mapped_data["pos"] + mapped_data["neg"]
-            all_source_entities = extract_entities_as_target(source_targets_raw, "is_gap")
-
-            # Undersampling para treino rápido do discriminador
-            tool_train_neg = random.sample(
-                all_source_entities,
-                min(len(all_source_entities), len(tool_train_pos) * 2)
-            )
-
-            filtered_gap_data_facts = [fact for fact in knowledge_gap_data["facts"] if fact.split('(', 1)[0] in valid_predicates]
-
-            # Fatos Unificados: O RDN precisa ver Source e Gap juntos
-            all_facts = (
-                    filtered_gap_data_facts +
-                    knowledge_gap_data["pos"] +  # Alvos originais viram fatos de contexto
-                    knowledge_gap_data["neg"] +
-                    mapped_data["facts"] +
-                    mapped_data["pos"] +
-                    mapped_data["neg"]
-            )
-
-            unified_dataset = {
-                "facts": all_facts,
-                "pos": tool_train_pos,
-                "neg": tool_train_neg
-            }
-
-            # --- B. TREINO E TESTE DO DISCRIMINADOR ---
-
-            selector_model = SelectorModel(
-                valid_predicates=valid_predicates,
-                target=self._target_domain_name,
-                target_domain_metadata=self._target_domain_metadata,
-                prefix_path=self._base_path
-            )
-
-            # Treina para distinguir Gap vs Source
-            selector_model.train(unified_dataset, filter_predicates=False)
-
-            # Prepara teste: Queremos avaliar TODO o source
-            # Injetamos as queries 'is_gap(X)' para todas as entidades source
-            mapped_data_for_test = mapped_data.copy()
-
-            # Nota: O 'test' do SelectorModel deve usar as queries implícitas ou as que passarmos.
-            # Aqui assumimos que ele vai testar contra o que estiver definido no mapped_data
-            # (que contem pos/neg originais).
-            # Para garantir, poderíamos injetar 'pos': all_source_entities se o método test usar a chave 'pos'.
-            selector_model.test(mapped_data_for_test)
-
-            # --- C. SELEÇÃO E CORTES (SELECTION) ---
-
-            # Recebe listas ['is_gap(src_a)', ...] que passaram no threshold (ex: > 0.5)
-            # O modelo retorna separado quem era originalmente Pos ou Neg no source
-            preds_pos_raw, preds_neg_raw = selector_model.get_best_samples()
-
-            # Extrai IDs limpos
-            candidates_pos = parse_entities_from_preds(preds_pos_raw)
-            candidates_neg = parse_entities_from_preds(preds_neg_raw)
-
-            # Aplica as COTAS (Se vier mais que o necessário, fazemos downsample)
-            # Se vier menos (score baixo), pegamos o que tem.
-
-            selected_pos_entities = set()
-            if len(candidates_pos) > 0:
-                k = min(len(candidates_pos), needed_pos)
-                selected_pos_entities = set(random.sample(list(candidates_pos), k))
-
-            selected_neg_entities = set()
-            if len(candidates_neg) > 0:
-                k = min(len(candidates_neg), needed_neg)
-                selected_neg_entities = set(random.sample(list(candidates_neg), k))
-
-            all_approved_entities = selected_pos_entities.union(selected_neg_entities)
-
-            print(
-                f"[Domain {mapping_key}] Selecionados {len(selected_pos_entities)} Pos, {len(selected_neg_entities)} Neg.")
-
-            # --- D. FILTRAGEM DE RELAÇÕES E FATOS (TRANSFER) ---
-
-            # 1. Recupera as relações samevenue(a,b)
-            batch_pos = filter_relations_by_entities(mapped_data["pos"], all_approved_entities, strict=True)
-            batch_neg = filter_relations_by_entities(mapped_data["neg"], all_approved_entities, strict=True)
-
-            final_transfer_pos.extend(batch_pos)
-            final_transfer_neg.extend(batch_neg)
-
-            # 2. Recupera fatos de contexto (author, keyword, etc)
-            # Trazemos fatos se eles mencionarem QUALQUER entidade aprovada
-            source_facts = mapped_data["facts"]
-            batch_facts = []
-            for fact in source_facts:
-                args = extract_args(fact)
-                if any(arg in all_approved_entities for arg in args):
-                    batch_facts.append(fact)
-
-            final_transfer_facts.extend(batch_facts)
-
-        print(
-            f"[Final] Transferindo: {len(final_transfer_pos)} Pos, {len(final_transfer_neg)} Neg, {len(final_transfer_facts)} Fatos.")
-
-        return {
-            "facts": final_transfer_facts,
-            "pos": final_transfer_pos,
-            "neg": final_transfer_neg
-        }
-
-    def _get_transfer_dataset(self, fold_configuration):
         transfer_dataset = defaultdict(dict)
-        approach = 0
+        fold_id = f"tr_{'-'.join(fold_configuration['train'])}_va_{'-'.join(fold_configuration['validation'])}"
 
-        target_data = {
+        # ---------- 1. PREPARAÇÃO ----------
+        train_target_data = {
             **self._dataset.get_target_facts(fold_configuration["train"]),
             **self._dataset.get_target_pos(fold_configuration["train"]),
-            **self._dataset.get_target_neg(fold_configuration["train"])
+            **self._dataset.get_target_neg(fold_configuration["train"]),
         }
+        target_pos_count = len(train_target_data["pos"])
+        target_neg_count = len(train_target_data["neg"])
+
+        validation_target_data = {
+            **self._dataset.get_target_facts(fold_configuration["validation"]),
+            **self._dataset.get_target_pos(fold_configuration["validation"]),
+            **self._dataset.get_target_neg(fold_configuration["validation"]),
+        }
+
+        # ---------- 2. ORÁCULO ----------
+        scorer_model = SelectorModel(
+            valid_predicates=self._target_domain_metadata["predicates"],
+            target=self._target_domain_name,
+            target_domain_metadata=self._target_domain_metadata,
+            prefix_path=self._base_path,
+            name=f"scorer_{self._target_domain_name}_{fold_id}",
+        )
+        scorer_model.train(train_target_data)
+        scorer_model.test(validation_target_data)
+        oracle_metrics = scorer_model.get_test_metrics()
+        oracle_pr = max(0.0, min(1.0, oracle_metrics.get("auc_pr", 0.5)))
+
+        confidence_factor = oracle_pr
+        max_impact_ratio = 1.0 - (0.5 * confidence_factor)
+
+        # Estruturas para o Pool Global (Antes da normalização de volume)
+        pool_source_pos = {}  # inst -> {gfl_weight, mapping_key, source_name, facts}
+        pool_source_neg = {}
+
+        sampling_log = {
+            "round": round_idx,
+            "target_samples": {"pos": target_pos_count, "neg": target_neg_count},
+            "parameters": {"sample_percentage": sample_percentage},
+            "sources_info": {}
+        }
+
+        # ---------- 3. PESAGEM INDIVIDUAL (GFL) ----------
+        num_mappings = len(self._source_domains)
 
         for mapping_key, mapped_data in self._source_domains.items():
             source_domain_name = self._selected_mappings[mapping_key]["source"]
-            valid_predicates = [
-                predicate for predicate in list(self._selected_mappings[mapping_key]["predicate_mappings"].values())
-                if predicate is not None
-            ]
+            if not mapped_data["pos"] or not mapped_data["neg"]: continue
 
-            raw_transfer_dataset = {
-                "facts": mapped_data["facts"],
-                "pos": mapped_data["pos"],
-                "neg": mapped_data["neg"]
+            scorer_model.test(mapped_data)
+            try:
+                estimates = scorer_model.load_estimates()
+            except:
+                continue
+
+            gamma = self.gamma
+            gfl_lambda = oracle_pr
+
+            pos_set = set(mapped_data["pos"])
+
+            sampling_log["sources_info"][mapping_key] = {
+                "source": source_domain_name,
+                "pos_before": len(mapped_data["pos"]),
+                "neg_before": len(mapped_data["neg"])
             }
 
-            if not approach:
-                selector_model = SelectorModel(
-                    valid_predicates=valid_predicates,
-                    target=self._target_domain_name,
-                    target_domain_metadata=self._target_domain_metadata,
-                    prefix_path=self._base_path
-                )
+            for est in estimates:
+                inst, c_i = est["raw"], max(min(est["score"], 1.0 - 1e-6), 1e-6)
 
-                selector_model.train(target_data)
+                # Núcleo GFL
+                gfl_core = -math.log(c_i) if gfl_lambda < 1e-4 else (1.0 - (c_i ** gfl_lambda)) / gfl_lambda
+                w_gfl = max((confidence_factor * ((1.0 - c_i) ** gamma) * gfl_core) + ((1.0 - confidence_factor) * 1.0),
+                            0.01)
 
-                target_train_metrics = selector_model.get_train_metrics()
-
-                selector_model.delete()
-
-                selector_model = SelectorModel(
-                    valid_predicates=valid_predicates,
-                    target=self._target_domain_name,
-                    target_domain_metadata=self._target_domain_metadata,
-                    prefix_path=self._base_path
-                )
-
-                unified_data = {
-                    "facts": target_data["facts"] + mapped_data["facts"],
-                    "pos": target_data["pos"] + mapped_data["pos"],
-                    "neg": target_data["neg"] + mapped_data["neg"]
+                entry = {
+                    "weight": w_gfl,  # Peso de qualidade bruta
+                    "mapping_key": mapping_key,
+                    "source_name": source_domain_name,
+                    "facts": mapped_data["facts"]
                 }
 
-                selector_model.train(unified_data)
-                selector_model.test(target_data)
+                if inst in pos_set:
+                    pool_source_pos[inst] = entry
+                else:
+                    pool_source_neg[inst] = entry
 
-                unified_data_train_metrics = selector_model.get_test_metrics()
+        # ---------- 4. REDUÇÃO NO AGREGADO (RANKING GLOBAL) ----------
+        selected_pos_ids = list(pool_source_pos.keys())
+        selected_neg_ids = list(pool_source_neg.keys())
 
-                if unified_data_train_metrics["auc_roc"] > target_train_metrics["auc_roc"] and unified_data_train_metrics["auc_pr"] > target_train_metrics["auc_pr"] :
-                    selector_model.test(mapped_data)
-                    best_pos, best_neg = selector_model.get_best_samples()
-                    raw_transfer_dataset = {
-                        "facts": mapped_data["facts"],
-                        "pos": [sample["raw"] for sample in best_pos],
-                        "neg": [sample["raw"] for sample in best_neg]
-                    }
-                    approach = 4
+        if num_mappings > 1:
+            k_pos = math.ceil(len(pool_source_pos) * sample_percentage)
+            k_neg = math.ceil(len(pool_source_neg) * sample_percentage)
 
-                selector_model.delete()
+            if len(selected_pos_ids) > k_pos:
+                selected_pos_ids = sorted(selected_pos_ids, key=lambda x: pool_source_pos[x]["weight"], reverse=True)[
+                                   :k_pos]
+            if len(selected_neg_ids) > k_neg:
+                selected_neg_ids = sorted(selected_neg_ids, key=lambda x: pool_source_neg[x]["weight"], reverse=True)[
+                                   :k_neg]
 
-            if not approach:
-                approach = 5
+        sampling_log["global_reduction"] = {
+            "total_pool_pos": len(pool_source_pos), "total_pool_neg": len(pool_source_neg),
+            "selected_pos": len(selected_pos_ids), "selected_neg": len(selected_neg_ids)
+        }
 
-            transfer_dataset[source_domain_name][mapping_key] = raw_transfer_dataset
+        # ---------- 5. NORMALIZAÇÃO DE VOLUME (ALPHA) PÓS-CORTE ----------
+        # Agora calculamos o somatório dos pesos apenas de quem SOBREVIVEU
+        # Agrupamos por mapping_key para manter a normalização estratificada por domínio
 
-        return transfer_dataset, approach
+        final_weights = {}  # inst -> final_weight
 
-    def _kg_training_workflow(self, fold_configuration):
+        # Estrutura auxiliar para somar pesos dos selecionados por mapping
+        sum_weights_per_mapping = defaultdict(lambda: {"pos": 0.0, "neg": 0.0})
+
+        for inst in selected_pos_ids:
+            sum_weights_per_mapping[pool_source_pos[inst]["mapping_key"]]["pos"] += pool_source_pos[inst]["weight"]
+        for inst in selected_neg_ids:
+            sum_weights_per_mapping[pool_source_neg[inst]["mapping_key"]]["neg"] += pool_source_neg[inst]["weight"]
+
+        max_allowed_pos = float(target_pos_count) * max_impact_ratio
+        max_allowed_neg = float(target_neg_count) * max_impact_ratio
+
+        # Aplicar Scaling Alpha e Distribuir no Dataset
+        for inst in selected_pos_ids:
+            meta = pool_source_pos[inst]
+            m_key = meta["mapping_key"]
+            s_name = meta["source_name"]
+
+            # Fator de escala baseado apenas no que restou deste mapping
+            sum_w = sum_weights_per_mapping[m_key]["pos"]
+            alpha_scale = max_allowed_pos / sum_w if sum_w > 0 else 1.0
+
+            w_final = max(meta["weight"] * alpha_scale, 0.001)
+            final_weights[inst] = w_final
+
+            if m_key not in transfer_dataset[s_name]:
+                transfer_dataset[s_name][m_key] = {"facts": meta["facts"], "pos": [], "neg": []}
+            transfer_dataset[s_name][m_key]["pos"].append(inst)
+
+        for inst in selected_neg_ids:
+            meta = pool_source_neg[inst]
+            m_key = meta["mapping_key"]
+            s_name = meta["source_name"]
+
+            sum_w = sum_weights_per_mapping[m_key]["neg"]
+            alpha_scale = max_allowed_neg / sum_w if sum_w > 0 else 1.0
+
+            w_final = max(meta["weight"] * alpha_scale, 0.001)
+            final_weights[inst] = w_final
+
+            if m_key not in transfer_dataset[s_name]:
+                transfer_dataset[s_name][m_key] = {"facts": meta["facts"], "pos": [], "neg": []}
+            transfer_dataset[s_name][m_key]["neg"].append(inst)
+
+        # ---------- 6. EXPORTAÇÃO ----------
+        global_instance_weights = {inst: 1.0 for inst in train_target_data["pos"]}
+        global_instance_weights.update({inst: 1.0 for inst in train_target_data["neg"]})
+        global_instance_weights.update(final_weights)
+
+        weights_dir = os.path.join(self._base_path, "weights")
+        os.makedirs(weights_dir, exist_ok=True)
+
+        with open(os.path.join(weights_dir, f"sampling_log_fold_{fold_id}_rd_{round_idx}.json"), "w") as f:
+            json.dump(sampling_log, f, indent=4)
+
+        single_weights_file_path = os.path.join(weights_dir, f"weights_global_{self._target_domain_name}_{fold_id}.txt")
+        with open(single_weights_file_path, "w") as f:
+            for inst, w in global_instance_weights.items():
+                f.write(f"{inst}\t{w:.6f}\n")
+
+        scorer_model.delete()
+        return transfer_dataset, single_weights_file_path
+
+    def _gfl_training_workflow(self, fold_configuration, weights_file_path):
         transfer_learning_train_dataset = self._dataset.generate_train_srldatabase(
             fold_configuration["train"],
             use_recursion=self._target_uses_recursion,
@@ -511,7 +279,8 @@ class TransferlearningManager:
         model = RdnBoost(
             target_domain_metadata=self._target_domain_metadata,
             prefix_path=self._base_path,
-            name="kg_model"
+            name="gfl_model",
+            weights_file_path=weights_file_path
         )
 
         model.train(transfer_learning_train_dataset)
@@ -524,7 +293,7 @@ class TransferlearningManager:
 
         return train_metrics, test_metrics
 
-    def default_transfer_learning(self, rounds:int = 3):
+    def default_transfer_learning(self, rounds: int = 3):
         out = []
 
         data = defaultdict(dict)
@@ -572,12 +341,12 @@ class TransferlearningManager:
 
         return out
 
-    def kg_transfer_learning(self, rounds: int = 3):
+    def gfl_transfer_learning(self, rounds: int = 3):
         out = []
         tl_not_possible = []
 
         for fold_configuration in self._folds_split:
-            for _ in range(rounds):
+            for round_index in range(rounds):
                 self._dataset.reset_source_data()
 
                 result = {"transfer_learning": False, "fold_configuration": fold_configuration, "log": ""}
@@ -585,22 +354,25 @@ class TransferlearningManager:
 
                 if fold_configuration["train"][0] not in tl_not_possible:
                     # Get transfer dataset
-                    transfer_learning_raw_dataset, approach = self._get_transfer_dataset(
-                        fold_configuration=fold_configuration
+                    transfer_learning_raw_dataset, weights_file_path = self._get_transfer_dataset(
+                        fold_configuration=fold_configuration,
+                        round_idx=round_index
                     )
 
                     if transfer_learning_raw_dataset is not None:
                         result["transfer_learning"] = True
-                        result["transfer_learning_strategy"] = f"Approach {str(approach)}"
                         self._dataset.process_source_from_data(transfer_learning_raw_dataset)
 
                     else:
                         tl_not_possible.append(fold_configuration["train"][0])
                         result["log"] += "Transfer-learning dataset could not be generated."
 
-                tl_train_metrics, tl_test_metrics = self._kg_training_workflow(
-                    fold_configuration=fold_configuration
+                tl_train_metrics, tl_test_metrics = self._gfl_training_workflow(
+                    fold_configuration=fold_configuration,
+                    weights_file_path=weights_file_path
                 )
+
+                os.remove(weights_file_path)
 
                 self._dataset.reset_source_data()
 
@@ -614,15 +386,15 @@ class TransferlearningManager:
     def _save_results(self, results):
         """Salva os resultados do transfer learning em um arquivo JSON."""
         import shutil
-        
+
         results_dir = os.path.join(self._base_path, "results")
         os.makedirs(results_dir, exist_ok=True)
-        
+
         source_domains = "_".join(results["source"])
         mapping_ids = "-".join(self._selected_mappings.keys())
         base_filename = f"{source_domains}_{self._target_domain_name}_{mapping_ids}.json"
         filepath = os.path.join(results_dir, base_filename)
-        
+
         # Se arquivo já existe, adiciona número no final
         if os.path.exists(filepath):
             counter = 1
@@ -630,10 +402,10 @@ class TransferlearningManager:
             while os.path.exists(os.path.join(results_dir, f"{name}_{counter}{ext}")):
                 counter += 1
             filepath = os.path.join(results_dir, f"{name}_{counter}{ext}")
-        
+
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
-        
+
         print(f"Resultados salvos em: {filepath}")
         return filepath
 
@@ -646,13 +418,13 @@ class TransferlearningManager:
             "mappings": list(self._selected_mappings.values())
         }
 
-        kg_tl_out = self.kg_transfer_learning()
+        gfl_tl_out = self.gfl_transfer_learning()
         default_tl_out = self.default_transfer_learning()
 
         results["default_transfer_learning_results"] = default_tl_out
-        results["kg_transfer_learning_results"] = kg_tl_out
-        
+        results["gfl_transfer_learning_results"] = gfl_tl_out
+
         # Salva os resultados em arquivo JSON
         self._save_results(results)
-        
+
         return results

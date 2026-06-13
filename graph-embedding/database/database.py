@@ -159,8 +159,8 @@ class DatabaseWrapper:
             neg.extend(self._data["target"][fold]["neg"])
         return {"neg": neg}
 
-    def generate_fold_splits(self, small_dataset=True):
-        return generate_folds(self._target_domain_path, small_dataset)
+    def generate_fold_splits(self, small_dataset=True, use_validation=False):
+        return generate_folds(self._target_domain_path, small_dataset, use_validation)
 
     def get_target_domain_metadata(self):
         return self._target_domain_metadata

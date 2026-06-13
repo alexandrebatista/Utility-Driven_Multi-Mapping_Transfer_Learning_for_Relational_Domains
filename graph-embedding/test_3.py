@@ -9,7 +9,7 @@ from mapping.utils import select_mappings
 base_path = "./tl_experiments_3"
 
 domains = get_dataset_names("./preprocessed")
-targets = ["cora", "nell_finances", "yeast"]
+targets = ["cora"]#, "nell_finances", "yeast"]
 target_domains = [domain for domain in targets if domain != "uwcse"]
 
 
