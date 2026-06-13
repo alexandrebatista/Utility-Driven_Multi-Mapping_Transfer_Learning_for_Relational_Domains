@@ -34,6 +34,7 @@ class TransferlearningManager:
 
         self._source_domains = None
         self._selected_mappings = None
+        self.gamma = 0.5
 
     def select_mappings(self, number_of_mappings, source_domain_name=None):
         with open(self._mappings_path, "r", encoding="utf-8") as f:
@@ -44,6 +45,9 @@ class TransferlearningManager:
 
     def set_mappings(self, selected_mappings):
         self.reset(selected_mappings)
+
+    def set_gamma(self, gamma):
+        self.gamma = gamma
 
     def reset(self, selected_mappings):
         self._selected_mappings = selected_mappings
@@ -72,7 +76,7 @@ class TransferlearningManager:
             self._dataset.get_target_domain_metadata()
         )
 
-    def _get_transfer_dataset(self, fold_configuration, sample_percentage=1.00, round_idx=0):
+    def _get_transfer_dataset(self, fold_configuration, sample_percentage=0.5, round_idx=0):
         """
         Versão Corrigida:
         1. Calcula pesos GFL (qualidade individual).
@@ -142,7 +146,9 @@ class TransferlearningManager:
             except:
                 continue
 
-            gamma, gfl_lambda = 0.5, oracle_pr
+            gamma = self.gamma
+            gfl_lambda = oracle_pr
+
             pos_set = set(mapped_data["pos"])
 
             sampling_log["sources_info"][mapping_key] = {
@@ -259,7 +265,7 @@ class TransferlearningManager:
         scorer_model.delete()
         return transfer_dataset, single_weights_file_path
 
-    def _kg_training_workflow(self, fold_configuration, weights_file_path):
+    def _gfl_training_workflow(self, fold_configuration, weights_file_path):
         transfer_learning_train_dataset = self._dataset.generate_train_srldatabase(
             fold_configuration["train"],
             use_recursion=self._target_uses_recursion,
@@ -273,7 +279,7 @@ class TransferlearningManager:
         model = RdnBoost(
             target_domain_metadata=self._target_domain_metadata,
             prefix_path=self._base_path,
-            name="kg_model",
+            name="gfl_model",
             weights_file_path=weights_file_path
         )
 
@@ -335,7 +341,7 @@ class TransferlearningManager:
 
         return out
 
-    def kg_transfer_learning(self, rounds: int = 3):
+    def gfl_transfer_learning(self, rounds: int = 3):
         out = []
         tl_not_possible = []
 
@@ -361,7 +367,7 @@ class TransferlearningManager:
                         tl_not_possible.append(fold_configuration["train"][0])
                         result["log"] += "Transfer-learning dataset could not be generated."
 
-                tl_train_metrics, tl_test_metrics = self._kg_training_workflow(
+                tl_train_metrics, tl_test_metrics = self._gfl_training_workflow(
                     fold_configuration=fold_configuration,
                     weights_file_path=weights_file_path
                 )
@@ -412,11 +418,11 @@ class TransferlearningManager:
             "mappings": list(self._selected_mappings.values())
         }
 
-        kg_tl_out = self.kg_transfer_learning()
+        gfl_tl_out = self.gfl_transfer_learning()
         default_tl_out = self.default_transfer_learning()
 
         results["default_transfer_learning_results"] = default_tl_out
-        results["kg_transfer_learning_results"] = kg_tl_out
+        results["gfl_transfer_learning_results"] = gfl_tl_out
 
         # Salva os resultados em arquivo JSON
         self._save_results(results)
