@@ -348,6 +348,7 @@ class TransferlearningManager:
 
                 result = {"transfer_learning": False, "fold_configuration": fold_configuration, "log": ""}
                 # Generate dataset with misclassified by the model
+                weights_file_path = None
 
                 if fold_configuration["train"][0] not in tl_not_possible:
                     # Get transfer dataset
@@ -369,7 +370,8 @@ class TransferlearningManager:
                     weights_file_path=weights_file_path
                 )
 
-                os.remove(weights_file_path)
+                if weights_file_path is not None:
+                    os.remove(weights_file_path)
 
                 self._dataset.reset_source_data()
 

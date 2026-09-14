@@ -6,7 +6,7 @@ def create_folder(path):
     if not path.exists():
         path.mkdir(parents=True, exist_ok=True)
 
-def select_mappings(mappings_dict, source_domain=None, number_of_mappings_to_select=10, selection_strategy='random'):
+def select_mappings(mappings_dict, source_domain=None, number_of_mappings_to_select=10, selection_strategy='random', seed=None):
     import random
 
     if selection_strategy == 'random':
@@ -16,8 +16,9 @@ def select_mappings(mappings_dict, source_domain=None, number_of_mappings_to_sel
             mappings_considered = list(mappings_dict.keys())
 
         # Corrigir a lógica: fazer sample SE houver mapeamentos suficientes
-        selected_mappings_keys = random.sample(
-            mappings_considered, 
+        rng = random.Random(seed)
+        selected_mappings_keys = rng.sample(
+            mappings_considered,
             min(number_of_mappings_to_select, len(mappings_considered))
         )
     else:

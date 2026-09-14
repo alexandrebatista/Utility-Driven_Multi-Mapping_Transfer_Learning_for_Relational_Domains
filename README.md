@@ -99,27 +99,23 @@ Instead of physically removing nodes or edges from the relational graph, the fra
 │   │   ├── apply_mappings.py              # rewrites source data under a mapping
 │   │   └── utils.py                       # select_mappings() — samples k mappings
 │   ├── preprocessed/          # the seven benchmark domains, fold-split
+│   ├── dependencies/           # vendored third-party code needed on HTCondor execute nodes
+│   │   └── TreeBoostler/                  # tree-based transfer learning for BoostSRL
 │   ├── main.py                 # ad-hoc driver (see Sec. 11)
 │   ├── job.py                  # single-mapping job (one mapping id from mappings.json)
 │   ├── launcher.sh             # execute-node wrapper for job.py
-│   ├── htcondor.py             # earlier HTCondor submitter for job.py (superseded, see Sec. 11)
 │   ├── submit_jobs.py          # current HTCondor submitter for job.py — one job per mapping
 │   ├── multisource_job.py      # flexible job: explicit --source --target --gamma --size --ids
 │   ├── multisource_launcher.sh # execute-node wrapper for multisource_job.py
-│   ├── multisource_submit.py   # HTCondor submitter, one job per (source, target) pair — incomplete, see Sec. 11
 │   └── submit_experiments.py   # HTCondor submitter for the full k × gamma ablation grid
-├── custom-dependencies/       # prebuilt srlearn wheel
+├── custom-dependencies/       # prebuilt srlearn wheel (outdated, see Sec. 6.1)
 ├── build_all_srl.sh           # build stock BoostSRL and install srlearn
 ├── build_all_srl_transfer.sh  # build UtilityMultiDomainRDNBoost and install srlearn
 ├── init.sh                    # create the Python virtual environment and install dependencies
 └── requirements.txt           # Python dependencies of the project
 ```
 
-Two components are **not tracked here** and must be cloned alongside before building:
-
-- `BoostSRL/` — the stock Java learner, built by `build_all_srl.sh`;
-- `UtilityMultiDomainRDNBoost/` — the instrumented learner that reads the per-instance weight file, built by `build_all_srl_transfer.sh`. **This is the one the GFL arm needs.**
-- `srlearn/` — the project's fork of the Python interface to the SRL engine.
+`srlearn/` and `UtilityMultiDomainRDNBoost/` are git submodules pointing at this project's forks — run `git submodule update --init --recursive` after cloning. `BoostSRL/`, the stock (unmodified) Java learner built by `build_all_srl.sh`, is **not tracked here** and is not needed unless you specifically want the stock baseline instead of the instrumented `UtilityMultiDomainRDNBoost` learner.
 
 ## 5. Main code components
 
@@ -215,7 +211,7 @@ source venv/bin/activate && pip install tqdm pandas htcondor
 
 (`tqdm` for `mapping/main.py`, `pandas` for `models/utils.py`, `htcondor` only for the cluster submitters.)
 
-> **The weighted path needs a newer srlearn than the one vendored here.** `models/model.py` passes `weights=` and `disable_limiters=` to `RDNBoost`, but neither the `srlearn/` checkout nor `custom-dependencies/srlearn-1.0.0-py2.py3-none-any.whl` declares those keywords — both raise `TypeError` on the GFL arm. Build and install the srlearn fork that carries them before running anything beyond the Default baseline.
+> **The weighted path needs the `srlearn` submodule, not the prebuilt wheel.** `models/model.py` passes `weights=` and `disable_limiters=` to `RDNBoost`. The `srlearn/` submodule (branch `instanceLevelUtility`) declares both keywords, but `custom-dependencies/srlearn-1.0.0-py2.py3-none-any.whl` predates them and raises `TypeError` on the GFL arm. Install from the `srlearn/` submodule before running anything beyond the Default baseline.
 
 ### 6.2 Generating the mappings
 
@@ -271,14 +267,12 @@ This script reads `mappings.json` (list format) by index and executes an isolate
 
 ### 6.5 Distributed execution with HTCondor
 
-Three submitters share the same cluster pattern — package a relocatable venv as `venv.tar.gz`, submit via `htcondor.Submit`, and each job resumes on top of an existing non-empty results folder instead of recomputing it:
+Two submitters share the same cluster pattern — package a relocatable venv as `venv.tar.gz`, submit via `htcondor.Submit`, and each job resumes on top of an existing non-empty results folder instead of recomputing it:
 
-| Submitter | Executes | Fan-out | Status |
-| --- | --- | --- | --- |
-| `submit_jobs.py` | `job.py` via `launcher.sh` | one job per mapping id | **current** — use this for the single-mapping sweep |
-| `submit_experiments.py` | `multisource_job.py` via `multisource_launcher.sh` | one job per (pair, mapping subset of size 1–5, γ ∈ {0.2, 1, 5}) | **current** — the full k × γ ablation grid |
-| `multisource_submit.py` | `multisource_job.py` via `multisource_launcher.sh` | one job per (source, target) pair | broken, see Section 11 |
-| `htcondor.py` | `job.py` via `launcher.sh` | one job per mapping id | superseded by `submit_jobs.py`, see Section 11 |
+| Submitter | Executes | Fan-out |
+| --- | --- | --- |
+| `submit_jobs.py` | `job.py` via `launcher.sh` | one job per mapping id — use this for the single-mapping sweep |
+| `submit_experiments.py` | `multisource_job.py` via `multisource_launcher.sh` | one job per (pair, mapping subset of size 1–5, γ ∈ {0.2, 1, 5}) — the full k × γ ablation grid |
 
 Run the current single-mapping sweep with:
 
@@ -297,8 +291,6 @@ python3 submit_experiments.py
 `submit_experiments.py` groups `mappings.json` by (source, target) pair, skips any pair whose target is `twitter`, takes the first five mapping ids of each remaining pair, and submits one job for **every** combination of subset size (5, 4, 3, 2, 1) × γ (0.2, 1, 5) of those ids — so a pair with 5 mappings produces 31 subsets × 3 γ values = 93 jobs. Results land at `results/<source>_to_<target>/size_<k>/gamma_<g>/ids_<id1-id2-...>/`.
 
 `launcher.sh` / `multisource_launcher.sh` run on the execute node: they unpack a relocatable virtualenv from `venv.tar.gz`, activate it, put the job directory on `PYTHONPATH`, and run the corresponding job script with the arguments HTCondor passed. Each job returns its own `results/` subtree via `transfer_output_files`.
-
-> Every submitter above lists a `dependencies` folder in `transfer_input_files`. No such folder exists in this repository — only `custom-dependencies/` does. Create a `dependencies/` folder (or point the script at `custom-dependencies/`) with whatever the execute node needs beyond the venv, before submitting.
 
 ## 7. Supported datasets and scenarios
 
@@ -392,21 +384,11 @@ The sampling log records how much data each channel contributed and how much sur
 
 Listed so you do not rediscover them the hard way.
 
-**`htcondor.py` is superseded and still buggy.** It lists `train_job.py` in `transfer_input_files`, but `launcher.sh` executes `job.py`; it also omits `preprocessed/`, `database/` and `dependencies` from the transfer, which `job.py` needs on the execute node. `submit_jobs.py` runs the exact same `job.py` / `launcher.sh` pair with all of this fixed — use it instead.
-
-**`multisource_submit.py` cannot run a job to completion.** Its `job_items` only carry `source` and `target`, and its submit description passes `"arguments": "$(source) $(target)"` — but `multisource_launcher.sh` expects five positional arguments (`SOURCE TARGET GAMMA SIZE IDS`) and `multisource_job.py` requires `--gamma`, `--size` and `--ids`. Every job this submitter queues will fail immediately on the execute node. Use `submit_experiments.py`, which passes all five.
-
-**`transfer_input_files` references a `dependencies` folder that does not exist.** All four submitters (`htcondor.py`, `submit_jobs.py`, `multisource_submit.py`, `submit_experiments.py`) list `dependencies` among the files to ship to the execute node; the repository only has `custom-dependencies/`. Create the expected folder or edit the submit descriptors before queuing jobs.
-
 **Broken legacy imports.** `mapping/main.py` imports `mapping.metrics`, and `models/main.py` imports `generate_knowledge_gap_data` from `models.model` — neither exists. `mapping/main.py`, `models/main.py` and `models/selector_models_workflow.py` therefore do not import. They are kept for reference; the live path is `models/transfer_learning_manager.py`.
 
 **`graph-embedding/main.py` is not a usable entry point.** `process_mappings` references an undefined `path`, `os` is imported inside the `__main__` block rather than at module level, and `process_mapping` calls `models_workflow` with `source_domains=` / `quality=` keywords its current signature no longer accepts. Use `job.py` or `multisource_job.py`.
 
 **Hardcoded absolute paths.** `mapping/main.py` (`BASE_DIR`) points at `/home/alexandre/mestrado/graph-embedding/...`. Change it, or run from that layout.
-
-**Unbound variable on the "transfer not possible" path.** In `TransferlearningManager.gfl_transfer_learning`, `weights_file_path` is assigned only inside the `if fold_configuration["train"][0] not in tl_not_possible` branch but used unconditionally afterwards. If a fold ever lands in `tl_not_possible`, the next round raises `UnboundLocalError`.
-
-**`mapping/utils.py::select_mappings` is unseeded.** It uses `random.sample` with no seed, so two runs comparing the "same" mappings can silently compare different ones. It is no longer on the path of `job.py` or `multisource_job.py` (both take explicit ids), but seed `random` before using it directly.
 
 **Scratch directories.** Models write into `<base_path>/selector_models/` and delete themselves afterwards. A crashed run leaves them behind; clear them before rerunning.
 
