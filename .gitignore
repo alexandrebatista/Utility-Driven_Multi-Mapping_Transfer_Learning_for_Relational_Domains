@@ -14,3 +14,10 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+
+# Large local datasets/results, not tracked for now (see README Sec. 4)
+/util-multimap-gfl/mappings/
+/util-multimap-gfl/mapped_datasets/
+/util-multimap-gfl/gfl_experiments_01/
+/util-multimap-gfl/gfl_experiments_02/
+/resultados-finais/

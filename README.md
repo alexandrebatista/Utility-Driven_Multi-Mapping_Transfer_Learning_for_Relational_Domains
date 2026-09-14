@@ -85,7 +85,7 @@ Instead of physically removing nodes or edges from the relational graph, the fra
 
 ```text
 .
-├── graph-embedding/           # main implementation of the experiment and transfer-learning workflow
+├── util-multimap-gfl/           # main implementation of the experiment and transfer-learning workflow
 │   ├── models/                # training, selection, and RDN-Boost workflow code
 │   │   ├── transfer_learning_manager.py   # the pipeline (live entry point)
 │   │   ├── selector_model.py              # target-guided selector
@@ -118,7 +118,7 @@ Instead of physically removing nodes or edges from the relational graph, the fra
 
 ### 5.1 Mapping generation
 
-File: `graph-embedding/mapping/mapping.py`
+File: `util-multimap-gfl/mapping/mapping.py`
 
 A source predicate may map to any target predicate of the same arity whose argument types are consistent with the type substitution accumulated so far, or to `null` (the predicate is dropped). `search_tasks_iterative` explores this space by backtracking, enforcing that the type substitution stays a function and that no two source predicates claim the same target predicate. The raw (*coherent*) solutions are filtered twice:
 
@@ -127,7 +127,7 @@ A source predicate may map to any target predicate of the same arity whose argum
 
 ### 5.2 Mapping application
 
-File: `graph-embedding/mapping/apply_mappings.py`
+File: `util-multimap-gfl/mapping/apply_mappings.py`
 
 Source facts that map onto the target predicate are promoted to positive examples; everything else becomes background knowledge. Negatives are then sampled in the target vocabulary at a 2:1 ratio.
 
@@ -135,7 +135,7 @@ Crucially, every constant is rewritten as `<mapping_id>_<constant>` (e.g. `0_dav
 
 ### 5.3 Transfer-learning manager
 
-File: `graph-embedding/models/transfer_learning_manager.py`
+File: `util-multimap-gfl/models/transfer_learning_manager.py`
 
 This module orchestrates the full workflow:
 
@@ -160,19 +160,19 @@ In the code, the central step is `TransferlearningManager._get_transfer_dataset(
 
 ### 5.4 RDN-Boost model
 
-File: `graph-embedding/models/model.py`
+File: `util-multimap-gfl/models/model.py`
 
 This component wraps the BoostSRL engine to train a model, test on validation/test data, and retrieve performance metrics. Metrics (AUC ROC, AUC PR, CLL, precision, recall, F1, inference time, learning time) are parsed back out of the BoostSRL logs by `models/utils.py`.
 
 ### 5.5 Target selector
 
-File: `graph-embedding/models/selector_model.py`
+File: `util-multimap-gfl/models/selector_model.py`
 
 The selector is a dedicated reliability-estimation component. It receives target data and produces scores indicating how consistent a mapped instance appears to be with the target domain.
 
 ### 5.6 Relational database layer
 
-Directory: `graph-embedding/database/`
+Directory: `util-multimap-gfl/database/`
 
 This part converts raw data into a relational/prolog representation compatible with SRL model training. It is responsible for:
 
@@ -212,7 +212,7 @@ source venv/bin/activate && pip install pandas htcondor
 
 ### 6.2 Generating the mappings
 
-The mapping-consuming scripts read a `mappings.json` at the working directory (or, for the earlier per-target-file layout, `graph-embedding/mappings/<target_domain>.json`). Both formats key a mapping the same way inside: `predicate_mappings`/`relation_mapping`, `type_mappings`/`term_type_mapping`, `source`, `target`, `id`. Generate them with `mapping.mapping.generate_mappings`:
+The mapping-consuming scripts read a `mappings.json` at the working directory (or, for the earlier per-target-file layout, `util-multimap-gfl/mappings/<target_domain>.json`). Both formats key a mapping the same way inside: `predicate_mappings`/`relation_mapping`, `type_mappings`/`term_type_mapping`, `source`, `target`, `id`. Generate them with `mapping.mapping.generate_mappings`:
 
 ```python
 import json, os
@@ -232,18 +232,18 @@ for source in sources:
         out.append(mapping)
         next_id += 1
 
-with open("./graph-embedding/mappings.json", "w") as f:
+with open("./util-multimap-gfl/mappings.json", "w") as f:
     json.dump(out, f)
 ```
 
 ### 6.3 Local execution
 
-All scripts run from **inside `graph-embedding/`** and resolve `./preprocessed` and `./mappings.json` relative to the working directory.
+All scripts run from **inside `util-multimap-gfl/`** and resolve `./preprocessed` and `./mappings.json` relative to the working directory.
 
 `multisource_job.py` is the current general-purpose entry point: it pools an explicit, comma-separated list of mapping ids from `mappings.json` for one source → target pair, at a chosen γ:
 
 ```bash
-cd graph-embedding
+cd util-multimap-gfl
 python3 multisource_job.py --source imdb --target cora --gamma 0.5 --size 5 --ids "0,1,2,3,4"
 ```
 
@@ -253,10 +253,10 @@ A single-mapping run (k = 1) is the `--size 1 --ids "<one id>"` case, or equival
 
 ### 6.4 Job-based execution
 
-To run an individual experiment for a single mapping, use `graph-embedding/job.py`:
+To run an individual experiment for a single mapping, use `util-multimap-gfl/job.py`:
 
 ```bash
-cd graph-embedding
+cd util-multimap-gfl
 python3 job.py 0
 ```
 
@@ -274,14 +274,14 @@ Two submitters share the same cluster pattern — package a relocatable venv as 
 Run the current single-mapping sweep with:
 
 ```bash
-cd graph-embedding
+cd util-multimap-gfl
 python3 submit_jobs.py
 ```
 
 or the full ablation grid with:
 
 ```bash
-cd graph-embedding
+cd util-multimap-gfl
 python3 submit_experiments.py
 ```
 
@@ -291,7 +291,7 @@ python3 submit_experiments.py
 
 ## 7. Supported datasets and scenarios
 
-Seven relational benchmarks ship fold-split under `graph-embedding/preprocessed/`. Each fold directory holds `facts.pl` (background), `pos.pl` / `neg.pl` (labelled examples of the target predicate) and `modes.pl` (the typed vocabulary, in BoostSRL mode syntax). Counts are for `fold00`; `modes.pl` is identical across folds of the same domain.
+Seven relational benchmarks ship fold-split under `util-multimap-gfl/preprocessed/`. Each fold directory holds `facts.pl` (background), `pos.pl` / `neg.pl` (labelled examples of the target predicate) and `modes.pl` (the typed vocabulary, in BoostSRL mode syntax). Counts are for `fold00`; `modes.pl` is identical across folds of the same domain.
 
 | Domain          | Folds | Target predicate        | Predicates | Pos | Neg |
 | --------------- | ----: | ----------------------- | ---------: | --: | --: |
@@ -385,7 +385,7 @@ Listed so you do not rediscover them the hard way.
 
 ## 12. Recommended next steps
 
-- review the data path configuration in `graph-embedding/models/transfer_learning_manager.py`;
+- review the data path configuration in `util-multimap-gfl/models/transfer_learning_manager.py`;
 - validate the structure of the `preprocessed/`, `mappings.json`, and `results/` folders;
 - run a simple experiment (`multisource_job.py` with `--size 1`) to confirm the end-to-end workflow;
 - compare results of the baseline without transfer versus the GFL-based pipeline.
