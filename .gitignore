@@ -1,1 +1,16 @@
-.idea/*
+.idea/
+**/.idea/
+__pycache__/
+*.py[cod]
+*.pyc
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# Not part of this project; not needed to run it
+/BoostSRL/
+/vscode/
+
+# Python packaging artifacts
+build/
+dist/
+*.egg-info/
