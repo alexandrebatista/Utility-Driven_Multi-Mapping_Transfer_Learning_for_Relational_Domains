@@ -1,0 +1,10 @@
+workedunder(+person,+person).
+workedunder(+person,-person).
+workedunder(-person,+person).
+female(+person).
+actor(+person).
+director(+person).
+movie(+movie,+person).
+movie(+movie,-person).
+movie(-movie,+person).
+genre(+person,+genre).
