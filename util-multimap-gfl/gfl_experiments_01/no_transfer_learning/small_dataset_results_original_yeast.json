@@ -1,0 +1,337 @@
+[
+    {
+        "rdn_version": "rdn",
+        "results": [
+            {
+                "train_folds": [
+                    "fold00"
+                ],
+                "test_folds": [
+                    "fold01",
+                    "fold02",
+                    "fold03"
+                ],
+                "train": {
+                    "inference_time_ms": 558,
+                    "f1": 0.713287,
+                    "recall": 0.586207,
+                    "precision": 0.910714,
+                    "cll": -0.464624,
+                    "auc_pr": 0.837762,
+                    "auc_roc": 0.879178
+                },
+                "test": {
+                    "inference_time_ms": 930,
+                    "f1": 0.701525,
+                    "recall": 0.570922,
+                    "precision": 0.909605,
+                    "cll": -0.462273,
+                    "auc_pr": 0.808708,
+                    "auc_roc": 0.85715
+                }
+            },
+            {
+                "train_folds": [
+                    "fold00"
+                ],
+                "test_folds": [
+                    "fold01",
+                    "fold02",
+                    "fold03"
+                ],
+                "train": {
+                    "inference_time_ms": 570,
+                    "f1": 0.6375,
+                    "recall": 0.586207,
+                    "precision": 0.69863,
+                    "cll": -0.510586,
+                    "auc_pr": 0.758784,
+                    "auc_roc": 0.812194
+                },
+                "test": {
+                    "inference_time_ms": 944,
+                    "f1": 0.586279,
+                    "recall": 0.5,
+                    "precision": 0.708543,
+                    "cll": -0.518452,
+                    "auc_pr": 0.702913,
+                    "auc_roc": 0.751512
+                }
+            },
+            {
+                "train_folds": [
+                    "fold00"
+                ],
+                "test_folds": [
+                    "fold01",
+                    "fold02",
+                    "fold03"
+                ],
+                "train": {
+                    "inference_time_ms": 585,
+                    "f1": 0.857143,
+                    "recall": 0.965517,
+                    "precision": 0.770642,
+                    "cll": -0.414785,
+                    "auc_pr": 0.936849,
+                    "auc_roc": 0.966442
+                },
+                "test": {
+                    "f1": 0.846787,
+                    "recall": 0.911348,
+                    "precision": 0.790769,
+                    "cll": -0.420027,
+                    "auc_pr": 0.909361,
+                    "auc_roc": 0.955636
+                }
+            },
+            {
+                "train_folds": [
+                    "fold01"
+                ],
+                "test_folds": [
+                    "fold00",
+                    "fold02",
+                    "fold03"
+                ],
+                "train": {
+                    "inference_time_ms": 807,
+                    "f1": 0.911917,
+                    "recall": 0.846154,
+                    "precision": 0.988764,
+                    "cll": -0.35158,
+                    "auc_pr": 0.956505,
+                    "auc_roc": 0.965884
+                },
+                "test": {
+                    "f1": 0.793651,
+                    "recall": 0.754717,
+                    "precision": 0.83682,
+                    "cll": -0.420159,
+                    "auc_pr": 0.88158,
+                    "auc_roc": 0.907099
+                }
+            },
+            {
+                "train_folds": [
+                    "fold01"
+                ],
+                "test_folds": [
+                    "fold00",
+                    "fold02",
+                    "fold03"
+                ],
+                "train": {
+                    "inference_time_ms": 927,
+                    "f1": 0.893401,
+                    "recall": 0.846154,
+                    "precision": 0.946237,
+                    "cll": -0.311821,
+                    "auc_pr": 0.961743,
+                    "auc_roc": 0.975153
+                },
+                "test": {
+                    "f1": 0.832981,
+                    "recall": 0.743396,
+                    "precision": 0.947115,
+                    "cll": -0.361871,
+                    "auc_pr": 0.908393,
+                    "auc_roc": 0.942983
+                }
+            },
+            {
+                "train_folds": [
+                    "fold01"
+                ],
+                "test_folds": [
+                    "fold00",
+                    "fold02",
+                    "fold03"
+                ],
+                "train": {
+                    "inference_time_ms": 896,
+                    "f1": 0.965854,
+                    "recall": 0.951923,
+                    "precision": 0.980198,
+                    "cll": -0.250956,
+                    "auc_pr": 0.993915,
+                    "auc_roc": 0.99688
+                },
+                "test": {
+                    "f1": 0.934579,
+                    "recall": 0.943396,
+                    "precision": 0.925926,
+                    "cll": -0.298204,
+                    "auc_pr": 0.974473,
+                    "auc_roc": 0.988526
+                }
+            },
+            {
+                "train_folds": [
+                    "fold02"
+                ],
+                "test_folds": [
+                    "fold00",
+                    "fold01",
+                    "fold03"
+                ],
+                "train": {
+                    "inference_time_ms": 475,
+                    "f1": 0.741176,
+                    "recall": 0.684783,
+                    "precision": 0.807692,
+                    "cll": -0.460212,
+                    "auc_pr": 0.859832,
+                    "auc_roc": 0.895942
+                },
+                "test": {
+                    "inference_time_ms": 913,
+                    "f1": 0.660377,
+                    "recall": 0.758123,
+                    "precision": 0.584958,
+                    "cll": -0.494234,
+                    "auc_pr": 0.758304,
+                    "auc_roc": 0.822463
+                }
+            },
+            {
+                "train_folds": [
+                    "fold02"
+                ],
+                "test_folds": [
+                    "fold00",
+                    "fold01",
+                    "fold03"
+                ],
+                "train": {
+                    "inference_time_ms": 483,
+                    "f1": 0.824242,
+                    "recall": 0.73913,
+                    "precision": 0.931507,
+                    "cll": -0.414723,
+                    "auc_pr": 0.916791,
+                    "auc_roc": 0.944028
+                },
+                "test": {
+                    "inference_time_ms": 984,
+                    "f1": 0.843806,
+                    "recall": 0.848375,
+                    "precision": 0.839286,
+                    "cll": -0.402905,
+                    "auc_pr": 0.908752,
+                    "auc_roc": 0.949859
+                }
+            },
+            {
+                "train_folds": [
+                    "fold02"
+                ],
+                "test_folds": [
+                    "fold00",
+                    "fold01",
+                    "fold03"
+                ],
+                "train": {
+                    "inference_time_ms": 480,
+                    "f1": 0.7875,
+                    "recall": 0.684783,
+                    "precision": 0.926471,
+                    "cll": -0.443813,
+                    "auc_pr": 0.878525,
+                    "auc_roc": 0.910267
+                },
+                "test": {
+                    "inference_time_ms": 938,
+                    "f1": 0.721519,
+                    "recall": 0.617329,
+                    "precision": 0.86802,
+                    "cll": -0.484359,
+                    "auc_pr": 0.800942,
+                    "auc_roc": 0.843439
+                }
+            },
+            {
+                "train_folds": [
+                    "fold03"
+                ],
+                "test_folds": [
+                    "fold00",
+                    "fold01",
+                    "fold02"
+                ],
+                "train": {
+                    "inference_time_ms": 915,
+                    "f1": 0.848101,
+                    "recall": 0.77907,
+                    "precision": 0.930556,
+                    "cll": -0.430648,
+                    "auc_pr": 0.907381,
+                    "auc_roc": 0.932328
+                },
+                "test": {
+                    "inference_time_ms": 937,
+                    "f1": 0.718447,
+                    "recall": 0.65371,
+                    "precision": 0.797414,
+                    "cll": -0.461572,
+                    "auc_pr": 0.820692,
+                    "auc_roc": 0.879359
+                }
+            },
+            {
+                "train_folds": [
+                    "fold03"
+                ],
+                "test_folds": [
+                    "fold00",
+                    "fold01",
+                    "fold02"
+                ],
+                "train": {
+                    "inference_time_ms": 784,
+                    "f1": 0.971429,
+                    "recall": 0.988372,
+                    "precision": 0.955056,
+                    "cll": -0.279775,
+                    "auc_pr": 0.974626,
+                    "auc_roc": 0.991245
+                },
+                "test": {
+                    "f1": 0.924875,
+                    "recall": 0.978799,
+                    "precision": 0.876582,
+                    "cll": -0.320151,
+                    "auc_pr": 0.948778,
+                    "auc_roc": 0.981427
+                }
+            },
+            {
+                "train_folds": [
+                    "fold03"
+                ],
+                "test_folds": [
+                    "fold00",
+                    "fold01",
+                    "fold02"
+                ],
+                "train": {
+                    "inference_time_ms": 813,
+                    "f1": 0.971429,
+                    "recall": 0.988372,
+                    "precision": 0.955056,
+                    "cll": -0.253907,
+                    "auc_pr": 0.981981,
+                    "auc_roc": 0.993375
+                },
+                "test": {
+                    "f1": 0.942446,
+                    "recall": 0.925795,
+                    "precision": 0.959707,
+                    "cll": -0.294186,
+                    "auc_pr": 0.960809,
+                    "auc_roc": 0.987342
+                }
+            }
+        ]
+    }
+]

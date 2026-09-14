@@ -1,0 +1,412 @@
+[
+    {
+        "rdn_version": "rdn",
+        "results": [
+            {
+                "train_folds": [
+                    "fold01",
+                    "fold02",
+                    "fold03",
+                    "fold04"
+                ],
+                "test_folds": [
+                    "fold00"
+                ],
+                "train": {
+                    "f1": 0.630901,
+                    "recall": 0.961117,
+                    "precision": 0.469568,
+                    "cll": -0.671698,
+                    "auc_pr": 0.510903,
+                    "auc_roc": 0.563204
+                },
+                "test": {
+                    "f1": 0.554487,
+                    "recall": 0.940217,
+                    "precision": 0.393182,
+                    "cll": -0.636626,
+                    "auc_pr": 0.438709,
+                    "auc_roc": 0.604509
+                }
+            },
+            {
+                "train_folds": [
+                    "fold01",
+                    "fold02",
+                    "fold03",
+                    "fold04"
+                ],
+                "test_folds": [
+                    "fold00"
+                ],
+                "train": {
+                    "f1": 0.630979,
+                    "recall": 0.961117,
+                    "precision": 0.469655,
+                    "cll": -0.671137,
+                    "auc_pr": 0.516834,
+                    "auc_roc": 0.568947
+                },
+                "test": {
+                    "f1": 0.55627,
+                    "recall": 0.940217,
+                    "precision": 0.394977,
+                    "cll": -0.635913,
+                    "auc_pr": 0.443282,
+                    "auc_roc": 0.607993
+                }
+            },
+            {
+                "train_folds": [
+                    "fold01",
+                    "fold02",
+                    "fold03",
+                    "fold04"
+                ],
+                "test_folds": [
+                    "fold00"
+                ],
+                "train": {
+                    "f1": 0.630901,
+                    "recall": 0.961117,
+                    "precision": 0.469568,
+                    "cll": -0.671253,
+                    "auc_pr": 0.516927,
+                    "auc_roc": 0.568907
+                },
+                "test": {
+                    "f1": 0.55627,
+                    "recall": 0.940217,
+                    "precision": 0.394977,
+                    "cll": -0.635858,
+                    "auc_pr": 0.443282,
+                    "auc_roc": 0.607993
+                }
+            },
+            {
+                "train_folds": [
+                    "fold00",
+                    "fold02",
+                    "fold03",
+                    "fold04"
+                ],
+                "test_folds": [
+                    "fold01"
+                ],
+                "train": {
+                    "f1": 0.589952,
+                    "recall": 0.935886,
+                    "precision": 0.430738,
+                    "cll": -0.65069,
+                    "auc_pr": 0.474861,
+                    "auc_roc": 0.583042
+                },
+                "test": {
+                    "f1": 0.738061,
+                    "recall": 0.992218,
+                    "precision": 0.587558,
+                    "cll": -0.745454,
+                    "auc_pr": 0.628005,
+                    "auc_roc": 0.528336
+                }
+            },
+            {
+                "train_folds": [
+                    "fold00",
+                    "fold02",
+                    "fold03",
+                    "fold04"
+                ],
+                "test_folds": [
+                    "fold01"
+                ],
+                "train": {
+                    "f1": 0.589305,
+                    "recall": 0.951915,
+                    "precision": 0.426747,
+                    "cll": -0.651452,
+                    "auc_pr": 0.471353,
+                    "auc_roc": 0.579476
+                },
+                "test": {
+                    "f1": 0.739568,
+                    "recall": 1.0,
+                    "precision": 0.586758,
+                    "cll": -0.746116,
+                    "auc_pr": 0.619227,
+                    "auc_roc": 0.517652
+                }
+            },
+            {
+                "train_folds": [
+                    "fold00",
+                    "fold02",
+                    "fold03",
+                    "fold04"
+                ],
+                "test_folds": [
+                    "fold01"
+                ],
+                "train": {
+                    "f1": 0.589143,
+                    "recall": 0.951915,
+                    "precision": 0.426576,
+                    "cll": -0.651527,
+                    "auc_pr": 0.470442,
+                    "auc_roc": 0.579542
+                },
+                "test": {
+                    "f1": 0.739923,
+                    "recall": 1.0,
+                    "precision": 0.587205,
+                    "cll": -0.745902,
+                    "auc_pr": 0.619309,
+                    "auc_roc": 0.517735
+                }
+            },
+            {
+                "train_folds": [
+                    "fold00",
+                    "fold01",
+                    "fold03",
+                    "fold04"
+                ],
+                "test_folds": [
+                    "fold02"
+                ],
+                "train": {
+                    "f1": 0.653219,
+                    "recall": 0.970443,
+                    "precision": 0.492295,
+                    "cll": -0.67054,
+                    "auc_pr": 0.527466,
+                    "auc_roc": 0.567961
+                },
+                "test": {
+                    "f1": 0.51979,
+                    "recall": 0.938038,
+                    "precision": 0.359499,
+                    "cll": -0.649137,
+                    "auc_pr": 0.383191,
+                    "auc_roc": 0.561734
+                }
+            },
+            {
+                "train_folds": [
+                    "fold00",
+                    "fold01",
+                    "fold03",
+                    "fold04"
+                ],
+                "test_folds": [
+                    "fold02"
+                ],
+                "train": {
+                    "f1": 0.654823,
+                    "recall": 0.968391,
+                    "precision": 0.494653,
+                    "cll": -0.670165,
+                    "auc_pr": 0.527724,
+                    "auc_roc": 0.568035
+                },
+                "test": {
+                    "f1": 0.51979,
+                    "recall": 0.938038,
+                    "precision": 0.359499,
+                    "cll": -0.648832,
+                    "auc_pr": 0.382613,
+                    "auc_roc": 0.560558
+                }
+            },
+            {
+                "train_folds": [
+                    "fold00",
+                    "fold01",
+                    "fold03",
+                    "fold04"
+                ],
+                "test_folds": [
+                    "fold02"
+                ],
+                "train": {
+                    "f1": 0.6534,
+                    "recall": 0.970443,
+                    "precision": 0.4925,
+                    "cll": -0.67154,
+                    "auc_pr": 0.517122,
+                    "auc_roc": 0.558879
+                },
+                "test": {
+                    "f1": 0.51979,
+                    "recall": 0.938038,
+                    "precision": 0.359499,
+                    "cll": -0.64961,
+                    "auc_pr": 0.380487,
+                    "auc_roc": 0.5596
+                }
+            },
+            {
+                "train_folds": [
+                    "fold00",
+                    "fold01",
+                    "fold02",
+                    "fold04"
+                ],
+                "test_folds": [
+                    "fold03"
+                ],
+                "train": {
+                    "f1": 0.628387,
+                    "recall": 0.944934,
+                    "precision": 0.470704,
+                    "cll": -0.664413,
+                    "auc_pr": 0.516951,
+                    "auc_roc": 0.581838
+                },
+                "test": {
+                    "f1": 0.590797,
+                    "recall": 0.962517,
+                    "precision": 0.4262,
+                    "cll": -0.67389,
+                    "auc_pr": 0.445036,
+                    "auc_roc": 0.539024
+                }
+            },
+            {
+                "train_folds": [
+                    "fold00",
+                    "fold01",
+                    "fold02",
+                    "fold04"
+                ],
+                "test_folds": [
+                    "fold03"
+                ],
+                "train": {
+                    "f1": 0.628209,
+                    "recall": 0.937885,
+                    "precision": 0.472272,
+                    "cll": -0.664569,
+                    "auc_pr": 0.516738,
+                    "auc_roc": 0.581484
+                },
+                "test": {
+                    "f1": 0.590797,
+                    "recall": 0.962517,
+                    "precision": 0.4262,
+                    "cll": -0.67415,
+                    "auc_pr": 0.445036,
+                    "auc_roc": 0.539024
+                }
+            },
+            {
+                "train_folds": [
+                    "fold00",
+                    "fold01",
+                    "fold02",
+                    "fold04"
+                ],
+                "test_folds": [
+                    "fold03"
+                ],
+                "train": {
+                    "f1": 0.628513,
+                    "recall": 0.945815,
+                    "precision": 0.470627,
+                    "cll": -0.664472,
+                    "auc_pr": 0.516947,
+                    "auc_roc": 0.581662
+                },
+                "test": {
+                    "f1": 0.590835,
+                    "recall": 0.966533,
+                    "precision": 0.425457,
+                    "cll": -0.673815,
+                    "auc_pr": 0.445041,
+                    "auc_roc": 0.539039
+                }
+            },
+            {
+                "train_folds": [
+                    "fold00",
+                    "fold01",
+                    "fold02",
+                    "fold03"
+                ],
+                "test_folds": [
+                    "fold04"
+                ],
+                "train": {
+                    "f1": 0.601075,
+                    "recall": 0.952169,
+                    "precision": 0.439148,
+                    "cll": -0.663129,
+                    "auc_pr": 0.482573,
+                    "auc_roc": 0.565236
+                },
+                "test": {
+                    "f1": 0.736686,
+                    "recall": 0.905455,
+                    "precision": 0.620948,
+                    "cll": -0.683647,
+                    "auc_pr": 0.660698,
+                    "auc_roc": 0.661076
+                }
+            },
+            {
+                "train_folds": [
+                    "fold00",
+                    "fold01",
+                    "fold02",
+                    "fold03"
+                ],
+                "test_folds": [
+                    "fold04"
+                ],
+                "train": {
+                    "f1": 0.601768,
+                    "recall": 0.952169,
+                    "precision": 0.439888,
+                    "cll": -0.661174,
+                    "auc_pr": 0.495288,
+                    "auc_roc": 0.571849
+                },
+                "test": {
+                    "f1": 0.751698,
+                    "recall": 0.905455,
+                    "precision": 0.642581,
+                    "cll": -0.675241,
+                    "auc_pr": 0.698368,
+                    "auc_roc": 0.691049
+                }
+            },
+            {
+                "train_folds": [
+                    "fold00",
+                    "fold01",
+                    "fold02",
+                    "fold03"
+                ],
+                "test_folds": [
+                    "fold04"
+                ],
+                "train": {
+                    "f1": 0.601768,
+                    "recall": 0.952169,
+                    "precision": 0.439888,
+                    "cll": -0.661476,
+                    "auc_pr": 0.492686,
+                    "auc_roc": 0.573775
+                },
+                "test": {
+                    "f1": 0.751698,
+                    "recall": 0.905455,
+                    "precision": 0.642581,
+                    "cll": -0.676077,
+                    "auc_pr": 0.68654,
+                    "auc_roc": 0.689675
+                }
+            }
+        ]
+    }
+]
