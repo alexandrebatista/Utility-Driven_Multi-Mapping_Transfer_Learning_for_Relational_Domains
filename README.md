@@ -90,8 +90,7 @@ Instead of physically removing nodes or edges from the relational graph, the fra
 │   │   ├── transfer_learning_manager.py   # the pipeline (live entry point)
 │   │   ├── selector_model.py              # target-guided selector
 │   │   ├── model.py                       # weighted RDN-Boost wrapper
-│   │   ├── utils.py                       # fold splits + BoostSRL log parsing
-│   │   └── selector_models_workflow.py    # earlier selector sweep (legacy, unused)
+│   │   └── utils.py                       # fold splits + BoostSRL log parsing
 │   ├── database/              # conversion of data to relational/prolog format
 │   ├── mapping/               # generation and application of vocabulary mappings
 │   │   ├── mapping.py                     # backtracking search + modes.pl parser
@@ -381,8 +380,6 @@ The sampling log records how much data each channel contributed and how much sur
 ## 11. Known gaps and caveats
 
 Listed so you do not rediscover them the hard way.
-
-**`models/selector_models_workflow.py` is unused.** It trains/tests a `SelectorModel` per mapping and writes the results back into `mappings.json`. Nothing on the live path (`job.py`, `multisource_job.py`, `models/transfer_learning_manager.py`) calls it; kept for reference in case the offline selector sweep is revisited.
 
 **Scratch directories.** Models write into `<base_path>/selector_models/` and delete themselves afterwards. A crashed run leaves them behind; clear them before rerunning.
 
