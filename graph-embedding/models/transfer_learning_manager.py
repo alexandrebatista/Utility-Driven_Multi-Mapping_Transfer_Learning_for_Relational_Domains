@@ -76,7 +76,7 @@ class TransferlearningManager:
             self._dataset.get_target_domain_metadata()
         )
 
-    def _get_transfer_dataset(self, fold_configuration, sample_percentage=0.5, round_idx=0):
+    def _get_transfer_dataset(self, fold_configuration, sample_percentage=0.25, round_idx=0):
         """
         1. Calcula pesos GFL (qualidade individual).
         2. Aplica Redução Global (mantém apenas os melhores % do pool).
