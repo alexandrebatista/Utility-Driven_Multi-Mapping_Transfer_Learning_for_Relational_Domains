@@ -6,3 +6,7 @@
 	path = UtilityMultiDomainRDNBoost
 	url = git@github.com:alexandrebatista/UtilityMultiDomainRDNBoost.git
 	branch = improving-hash-usage
+[submodule "util-brdn"]
+	path = util-brdn
+	url = https://github.com/cainafigueiredo/util-brdn.git
+	branch = main
