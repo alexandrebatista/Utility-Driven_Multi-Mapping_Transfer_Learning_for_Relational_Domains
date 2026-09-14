@@ -91,8 +91,7 @@ Instead of physically removing nodes or edges from the relational graph, the fra
 │   │   ├── selector_model.py              # target-guided selector
 │   │   ├── model.py                       # weighted RDN-Boost wrapper
 │   │   ├── utils.py                       # fold splits + BoostSRL log parsing
-│   │   ├── main.py                        # earlier single-mapping workflows (legacy)
-│   │   └── selector_models_workflow.py    # earlier selector sweep (legacy)
+│   │   └── selector_models_workflow.py    # earlier selector sweep (legacy, unused)
 │   ├── database/              # conversion of data to relational/prolog format
 │   ├── mapping/               # generation and application of vocabulary mappings
 │   │   ├── mapping.py                     # backtracking search + modes.pl parser
@@ -101,7 +100,6 @@ Instead of physically removing nodes or edges from the relational graph, the fra
 │   ├── preprocessed/          # the seven benchmark domains, fold-split
 │   ├── dependencies/           # vendored third-party code needed on HTCondor execute nodes
 │   │   └── TreeBoostler/                  # tree-based transfer learning for BoostSRL
-│   ├── main.py                 # ad-hoc driver (see Sec. 11)
 │   ├── job.py                  # single-mapping job (one mapping id from mappings.json)
 │   ├── launcher.sh             # execute-node wrapper for job.py
 │   ├── submit_jobs.py          # current HTCondor submitter for job.py — one job per mapping
@@ -206,10 +204,10 @@ These scripts:
 Use `build_all_srl.sh` instead when you want the stock learner. A few imports are not pinned in `requirements.txt` and must be added by hand:
 
 ```bash
-source venv/bin/activate && pip install tqdm pandas htcondor
+source venv/bin/activate && pip install pandas htcondor
 ```
 
-(`tqdm` for `mapping/main.py`, `pandas` for `models/utils.py`, `htcondor` only for the cluster submitters.)
+(`pandas` for `models/utils.py`, `htcondor` only for the cluster submitters.)
 
 > **The weighted path needs the `srlearn` submodule, not the prebuilt wheel.** `models/model.py` passes `weights=` and `disable_limiters=` to `RDNBoost`. The `srlearn/` submodule (branch `instanceLevelUtility`) declares both keywords, but `custom-dependencies/srlearn-1.0.0-py2.py3-none-any.whl` predates them and raises `TypeError` on the GFL arm. Install from the `srlearn/` submodule before running anything beyond the Default baseline.
 
@@ -384,17 +382,13 @@ The sampling log records how much data each channel contributed and how much sur
 
 Listed so you do not rediscover them the hard way.
 
-**Broken legacy imports.** `mapping/main.py` imports `mapping.metrics`, and `models/main.py` imports `generate_knowledge_gap_data` from `models.model` — neither exists. `mapping/main.py`, `models/main.py` and `models/selector_models_workflow.py` therefore do not import. They are kept for reference; the live path is `models/transfer_learning_manager.py`.
-
-**`graph-embedding/main.py` is not a usable entry point.** `process_mappings` references an undefined `path`, `os` is imported inside the `__main__` block rather than at module level, and `process_mapping` calls `models_workflow` with `source_domains=` / `quality=` keywords its current signature no longer accepts. Use `job.py` or `multisource_job.py`.
-
-**Hardcoded absolute paths.** `mapping/main.py` (`BASE_DIR`) points at `/home/alexandre/mestrado/graph-embedding/...`. Change it, or run from that layout.
+**`models/selector_models_workflow.py` is unused.** It trains/tests a `SelectorModel` per mapping and writes the results back into `mappings.json`. Nothing on the live path (`job.py`, `multisource_job.py`, `models/transfer_learning_manager.py`) calls it; kept for reference in case the offline selector sweep is revisited.
 
 **Scratch directories.** Models write into `<base_path>/selector_models/` and delete themselves afterwards. A crashed run leaves them behind; clear them before rerunning.
 
 ## 12. Recommended next steps
 
-- review the data path configuration in `graph-embedding/main.py` and `graph-embedding/models/transfer_learning_manager.py`;
+- review the data path configuration in `graph-embedding/models/transfer_learning_manager.py`;
 - validate the structure of the `preprocessed/`, `mappings.json`, and `results/` folders;
 - run a simple experiment (`multisource_job.py` with `--size 1`) to confirm the end-to-end workflow;
 - compare results of the baseline without transfer versus the GFL-based pipeline.
