@@ -78,7 +78,6 @@ class TransferlearningManager:
 
     def _get_transfer_dataset(self, fold_configuration, sample_percentage=0.5, round_idx=0):
         """
-        Versão Corrigida:
         1. Calcula pesos GFL (qualidade individual).
         2. Aplica Redução Global (mantém apenas os melhores % do pool).
         3. Normaliza o Volume (Alpha) apenas sobre os sobreviventes.
@@ -122,8 +121,7 @@ class TransferlearningManager:
         confidence_factor = oracle_pr
         max_impact_ratio = 1.0 - (0.5 * confidence_factor)
 
-        # Estruturas para o Pool Global (Antes da normalização de volume)
-        pool_source_pos = {}  # inst -> {gfl_weight, mapping_key, source_name, facts}
+        pool_source_pos = {}
         pool_source_neg = {}
 
         sampling_log = {
@@ -166,7 +164,7 @@ class TransferlearningManager:
                             0.01)
 
                 entry = {
-                    "weight": w_gfl,  # Peso de qualidade bruta
+                    "weight": w_gfl,
                     "mapping_key": mapping_key,
                     "source_name": source_domain_name,
                     "facts": mapped_data["facts"]
@@ -197,9 +195,8 @@ class TransferlearningManager:
             "selected_pos": len(selected_pos_ids), "selected_neg": len(selected_neg_ids)
         }
 
-        # ---------- 5. NORMALIZAÇÃO DE VOLUME (ALPHA) PÓS-CORTE ----------
-        # Agora calculamos o somatório dos pesos apenas de quem SOBREVIVEU
-        # Agrupamos por mapping_key para manter a normalização estratificada por domínio
+        # ---------- 5. NORMALIZAÇÃO DE VOLUME (ALPHA) ----------
+        # Agora calculamos o somatório dos pesos apenas de quem não foi removido
 
         final_weights = {}  # inst -> final_weight
 
