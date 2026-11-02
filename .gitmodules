@@ -1,10 +1,10 @@
 [submodule "srlearn"]
 	path = srlearn
-	url = git@github.com:alexandrebatista/srlearn.git
+	url = https://github.com/alexandrebatista/srlearn.git
 	branch = instanceLevelUtility
 [submodule "UtilityMultiDomainRDNBoost"]
 	path = UtilityMultiDomainRDNBoost
-	url = git@github.com:alexandrebatista/UtilityMultiDomainRDNBoost.git
+	url = https://github.com/alexandrebatista/UtilityMultiDomainRDNBoost.git
 	branch = improving-hash-usage
 [submodule "util-brdn"]
 	path = util-brdn
